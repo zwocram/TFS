@@ -1,4 +1,5 @@
 from datetime import datetime
+import pdb
 
 FORWARD_LOOKING_PERIOD = 6
 
@@ -29,6 +30,8 @@ class FuturesUtils(object):
     def resolve_expiration_month_codes(self):
 
         expiration_dates = []
+        expiration_months_codes = []
+        expiration_months = []
 
         sum_months = self._current_month + (FORWARD_LOOKING_PERIOD - 1)
         if sum_months > self._months_in_year:
@@ -53,6 +56,7 @@ class FuturesUtils(object):
                               >= self._current_month}
         future_codes = futures_subset.values()
         future_code_string = None
+
         for fc in future_codes:
             year = '20' + fc[-2:]
             month_from_code = list(self.exp_months.keys())[
@@ -62,14 +66,10 @@ class FuturesUtils(object):
             else:
                 month_from_code = month_from_code.__str__()
             year_month_combo = year + month_from_code
-            if future_code_string is None:
-                future_code_string = fc
-                future_month_string = year_month_combo
-            else:
-                future_code_string += ', ' + fc
-                future_month_string += ', ' + year_month_combo
-            new_expiration_period = future_code_string, future_month_string
+            expiration_months_codes.append(fc)
+            expiration_months.append(year_month_combo)
 
-        expiration_dates.append(new_expiration_period)
+        expiration_dates.append(expiration_months_codes)
+        expiration_dates.append(expiration_months)
 
         return expiration_dates

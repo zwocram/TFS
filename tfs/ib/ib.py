@@ -25,13 +25,15 @@ from ibapi.contract import Contract
 from threading import Thread
 import queue
 import datetime
+import logging
+import pdb
+from ib.ibexceptions import *
 
-# Try and get a valid time
 MAX_WAIT_SECONDS = 10
 DEFAULT_GET_CONTRACT_ID = 1001
-
 DEFAULT_HISTORIC_DATA_ID = 50
 DEFAULT_GET_CONTRACT_ID = 43
+MAX_DAYS_HISTORY = '55 D'
 
 # marker for when queue is finished
 FINISHED = object()
@@ -215,25 +217,33 @@ class IBClient(EClient):
         # Make a place to store the data we're going to return
         contract_details_queue = finishableQueue(self.init_contractdetails(reqId))
 
-        print("Getting full contract details from the server... ")
         self.reqContractDetails(reqId, ibcontract)
 
         # Run until we get a valid contract(s) or get bored waiting
-        MAX_WAIT_SECONDS = 10
         new_contract_details = contract_details_queue.get(timeout=MAX_WAIT_SECONDS)
 
-        while self.wrapper.is_error():
-            print(self.get_error())
+        try:
+            while self.wrapper.is_error():
+                raise ResolveContractDetailsException(ibcontract.symbol, self.get_error())
+                # print(self.get_error())
 
-        if contract_details_queue.timed_out():
-            print("Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour")
+            if contract_details_queue.timed_out():
+                raise IBTimeoutException(
+                    ibcontract.symbol, "Exceeded maximum wait for wrapper to confirm finished")
 
-        if len(new_contract_details) == 0:
-            print("Failed to get additional contract details: returning unresolved contract")
-            return ibcontract
+            if len(new_contract_details) == 0:
+                raise UnresolvedContractException(ibcontract.symbol,
+                                                  "Failed to get additional \
+                                                  contract details: returning \
+                                                  unresolved contract")
 
-        if len(new_contract_details) > 1:
-            print("got multiple contracts using first one")
+            if len(new_contract_details) > 1:
+                raise MultipleContractException(
+                    ibcontract.symbol, "got multiple contracts using first one")
+        except (ResolveContractDetailsException, IBTimeoutException,
+                UnresolvedContractException, MultipleContractException) as exp:
+            logging.error(exp)
+            return
 
         new_contract_details = new_contract_details[0]
 
@@ -257,7 +267,7 @@ class IBClient(EClient):
             tickerid,  # tickerId,
             ibcontract,  # contract,
             datetime.datetime.today().strftime("%Y%m%d %H:%M:%S %Z"),  # endDateTime,
-            durationStr,  # durationStr,
+            MAX_DAYS_HISTORY,  # durationStr,
             barSizeSetting,  # barSizeSetting,
             "TRADES",  # whatToShow,
             1,  # useRTH,
@@ -267,17 +277,24 @@ class IBClient(EClient):
         )
 
         # Wait until we get a completed data, an error, or get bored waiting
-        MAX_WAIT_SECONDS = 10
         print("Getting historical data from the server... could take %d seconds to complete " %
               MAX_WAIT_SECONDS)
 
         historic_data = historic_data_queue.get(timeout=MAX_WAIT_SECONDS)
 
-        while self.wrapper.is_error():
-            print(self.get_error())
+        try:
+            while self.wrapper.is_error():
+                raise HistoricalDataRetrieveException(ibcontract.symbol, self.get_error())
 
-        if historic_data_queue.timed_out():
-            print("Exceeded maximum wait for wrapper to confirm finished - seems to be normal behaviour")
+            if historic_data_queue.timed_out():
+                raise HistoricalDataTimeoutException(ibcontract.symbol,
+                                                     "Exceeded maximum wait \
+                                                     for wrapper to confirm \
+                                                     finished.")
+        except (HistoricalDataRetrieveException,
+                HistoricalDataTimeoutException) as exp:
+            logging.error(exp)
+            return
 
         self.cancelHistoricalData(tickerid)
 

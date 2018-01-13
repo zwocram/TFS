@@ -1,2 +1,4 @@
 tfs_env/*
 examples/*
+*pyc
+tfs/logs/*

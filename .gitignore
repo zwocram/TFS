@@ -2,3 +2,4 @@ tfs_env/*
 examples/*
 *pyc
 tfs/logs/*
+db/tfs.db

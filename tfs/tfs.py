@@ -3,6 +3,7 @@ import time
 import pdb
 import sys
 import logging
+from optparse import OptionParser
 import pandas as pd
 from datetime import datetime
 from utils import futures
@@ -34,13 +35,46 @@ if __name__ == '__main__':
     expiration_month_codes = expiration_dates[0]
     expiration_months = expiration_dates[1]
 
+    # parse arguments
+    parser = OptionParser()
+    parser.add_option("-e", "--eod", action="store_true", default=False,
+                      dest="eod", help="Perform end of day actions.")
+    (options, args) = parser.parse_args()
+    eod = options.eod
+
     try:
         app = ib.IB("127.0.0.1", 4011, 10)
     except AttributeError as exp:
-        print("Could not connect to TWS API application.")
+        print("Could not connect to the TWS API application.")
         sys.exit()
 
     current_time = app.get_time()
+
+    if eod:
+        for p in config.items('portfolio'):
+            ticker = p[0].upper()
+            exchange = p[1].split(',')[1].lstrip()
+            sec_type = p[1].split(',')[2].lstrip()
+
+            ibcontract = Contract()
+            ibcontract.secType = sec_type
+            ibcontract.symbol = ticker
+            ibcontract.exchange = exchange
+            ibcontract.currency = 'USD'
+
+            resolved_ibcontract = app.resolve_ib_contract(ibcontract)
+            time.sleep(10)
+
+            historic_data = app.get_IB_historical_data(resolved_ibcontract)
+
+            time.sleep(15)
+            if historic_data is not None:
+                df = pd.DataFrame(historic_data)
+                print(df)  # voor later
+
+            app.init_error()
+
+        sys.exit()
 
     for future in futures_list:
         future_meta_data = futures_list[future].split(',')

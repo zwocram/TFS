@@ -24,8 +24,12 @@ from ibapi.client import EClient
 from ibapi.contract import Contract
 from threading import Thread
 import queue
+import time
 import datetime
 import logging
+import pandas as pd
+import numpy as np
+
 import pdb
 from ib.ibexceptions import *
 
@@ -34,6 +38,8 @@ DEFAULT_GET_CONTRACT_ID = 1001
 DEFAULT_HISTORIC_DATA_ID = 50
 DEFAULT_GET_CONTRACT_ID = 43
 MAX_DAYS_HISTORY = '55 D'
+DEFAULT_MARKET_DATA_ID = 50
+DEFAULT_GET_CONTRACT_ID = 43
 
 # marker for when queue is finished
 FINISHED = object()
@@ -82,6 +88,95 @@ class finishableQueue(object):
         return self.status is TIME_OUT
 
 
+def _nan_or_int(x):
+    if not np.isnan(x):
+        return int(x)
+    else:
+        return x
+
+
+class stream_of_ticks(list):
+    """
+    Stream of ticks
+    """
+
+    def __init__(self, list_of_ticks):
+        super().__init__(list_of_ticks)
+
+    def as_pdDataFrame(self):
+
+        if len(self) == 0:
+            # no data; do a blank tick
+            return tick(datetime.datetime.now()).as_pandas_row()
+
+        pd_row_list = [tick.as_pandas_row() for tick in self]
+        pd_data_frame = pd.concat(pd_row_list)
+
+        return pd_data_frame
+
+
+class tick(object):
+    """
+    Convenience method for storing ticks
+    Not IB specific, use as abstract
+    """
+
+    def __init__(self, timestamp, bid_size=np.nan, bid_price=np.nan,
+                 ask_size=np.nan, ask_price=np.nan,
+                 last_trade_size=np.nan, last_trade_price=np.nan,
+                 ignorable_tick_id=None):
+
+        # ignorable_tick_id keyword must match what is used in the IBtick class
+
+        self.timestamp = timestamp
+        self.bid_size = _nan_or_int(bid_size)
+        self.bid_price = bid_price
+        self.ask_size = _nan_or_int(ask_size)
+        self.ask_price = ask_price
+        self.last_trade_size = _nan_or_int(last_trade_size)
+        self.last_trade_price = last_trade_price
+
+    def __repr__(self):
+        return self.as_pandas_row().__repr__()
+
+    def as_pandas_row(self):
+        """
+        Tick as a pandas dataframe, single row, so we can concat together
+        :return: pd.DataFrame
+        """
+
+        attributes = ['bid_size', 'bid_price', 'ask_size', 'ask_price',
+                      'last_trade_size', 'last_trade_price']
+
+        self_as_dict = dict([(attr_name, getattr(self, attr_name)) for attr_name in attributes])
+
+        return pd.DataFrame(self_as_dict, index=[self.timestamp])
+
+
+class IBtick(tick):
+    """
+    Resolve IB tick categories
+    """
+
+    def __init__(self, timestamp, tickid, value):
+
+        resolve_tickid = self.resolve_tickids(tickid)
+        super().__init__(timestamp, **dict([(resolve_tickid, value)]))
+
+    def resolve_tickids(self, tickid):
+
+        tickid_dict = dict([("0", "bid_size"), ("1", "bid_price"),
+                            ("2", "ask_price"), ("3", "ask_size"),
+                            ("4", "last_trade_price"),
+                            ("5", "last_trade_size")])
+
+        if str(tickid) in tickid_dict.keys():
+            return tickid_dict[str(tickid)]
+        else:
+            # This must be the same as the argument name in the parent class
+            return "ignorable_tick_id"
+
+
 class IBWrapper(EWrapper):
     """
     The wrapper deals with the action coming back from the IB
@@ -91,8 +186,12 @@ class IBWrapper(EWrapper):
 
     _msg_queue = queue.Queue()
     _contract_details = {}
-    _my_contract_details = {}
     _my_historic_data_dict = {}
+    _accepted_error_codes = [2106, 2107]
+
+    def __init__(self):
+        self._my_contract_details = {}
+        self._my_market_data_dict = {}
 
     def add_to_queue_class(ibwrapper_function):
         def wrap_the_wrapper(*args, **kwargs):
@@ -126,8 +225,9 @@ class IBWrapper(EWrapper):
 
     def error(self, id, errorCode, errorString):
         # Overriden method
-        errormsg = "IB error id %d errorcode %d string %s" % (id, errorCode, errorString)
-        self._my_errors.put(errormsg)
+        if errorCode not in self._accepted_error_codes:
+            errormsg = "IB error id %d errorcode %d string %s" % (id, errorCode, errorString)
+            self._my_errors.put(errormsg)
 
     # get contract details code
     def init_contractdetails(self, reqId):
@@ -178,6 +278,47 @@ class IBWrapper(EWrapper):
 
         self._my_historic_data_dict[tickerid].put(FINISHED)
 
+    # market data
+    def init_market_data(self, tickerid):
+        market_data_queue = self._my_market_data_dict[tickerid] = queue.Queue()
+
+        return market_data_queue
+
+    def get_time_stamp(self):
+        # Time stamp to apply to market data
+        # We could also use IB server time
+        return datetime.datetime.now()
+
+    def tickPrice(self, tickerid, tickType, price, attrib):
+        # overriden method
+
+        # For simplicity I'm ignoring these but they could be useful to you...
+        # See the documentation http://interactivebrokers.github.io/tws-api/md_receive.html#gsc.tab=0
+        # attrib.canAutoExecute
+        # attrib.pastLimit
+
+        this_tick_data = IBtick(self.get_time_stamp(), tickType, price)
+        self._my_market_data_dict[tickerid].put(this_tick_data)
+
+    def tickSize(self, tickerid, tickType, size):
+        # overriden method
+
+        this_tick_data = IBtick(self.get_time_stamp(), tickType, size)
+        self._my_market_data_dict[tickerid].put(this_tick_data)
+
+    def tickString(self, tickerid, tickType, value):
+        # overriden method
+
+        # value is a string, make it a float, and then in the parent class will be resolved to int if size
+        this_tick_data = IBtick(self.get_time_stamp(), tickType, float(value))
+        self._my_market_data_dict[tickerid].put(this_tick_data)
+
+    def tickGeneric(self, tickerid, tickType, value):
+        # overriden method
+
+        this_tick_data = IBtick(self.get_time_stamp(), tickType, value)
+        self._my_market_data_dict[tickerid].put(this_tick_data)
+
 
 class IBClient(EClient):
     """
@@ -189,6 +330,7 @@ class IBClient(EClient):
     def __init__(self, wrapper):
         # Set up with a wrapper inside
         EClient.__init__(self, wrapper)
+        self._market_data_q_dict = {}
 
     def get_time(self):
         """
@@ -224,22 +366,27 @@ class IBClient(EClient):
 
         try:
             while self.wrapper.is_error():
-                raise ResolveContractDetailsException(ibcontract.symbol, self.get_error())
+                raise ResolveContractDetailsException(
+                    "ResolveContractDetailsException", ibcontract.symbol,
+                    self.get_error())
                 # print(self.get_error())
 
             if contract_details_queue.timed_out():
-                raise IBTimeoutException(
-                    ibcontract.symbol, "Exceeded maximum wait for wrapper to confirm finished")
+                raise IBTimeoutException("IBTimeoutException",
+                                         ibcontract.symbol, "Exceeded maximum wait for wrapper "
+                                         " to confirm finished")
 
             if len(new_contract_details) == 0:
-                raise UnresolvedContractException(ibcontract.symbol,
-                                                  "Failed to get additional \
-                                                  contract details: returning \
-                                                  unresolved contract")
+                raise UnresolvedContractException(
+                    "UnresolvedContractException",
+                    ibcontract.symbol,
+                    "Failed to get additional "
+                    "contract details: returning "
+                    "unresolved contract")
 
             if len(new_contract_details) > 1:
-                raise MultipleContractException(
-                    ibcontract.symbol, "got multiple contracts using first one")
+                raise MultipleContractException("MultipleContractException",
+                                                ibcontract.symbol, "got multiple contracts using first one")
         except (ResolveContractDetailsException, IBTimeoutException,
                 UnresolvedContractException, MultipleContractException) as exp:
             logging.error(exp)
@@ -248,10 +395,72 @@ class IBClient(EClient):
         new_contract_details = new_contract_details[0]
 
         resolved_ibcontract = new_contract_details.summary
-
+        logging.info("resolved contract")
         return resolved_ibcontract
 
-    def get_IB_historical_data(self, ibcontract, durationStr="1 Y", barSizeSetting="1 day",
+    def start_getting_IB_market_data(self, resolved_ibcontract,
+                                     tickerid=DEFAULT_MARKET_DATA_ID):
+        """
+        Kick off market data streaming
+        :param resolved_ibcontract: a Contract object
+        :param tickerid: the identifier for the request
+        :return: tickerid
+        """
+
+        self._market_data_q_dict[tickerid] = self.wrapper.init_market_data(tickerid)
+        self.reqMktData(tickerid, resolved_ibcontract, "", False, False, [])
+
+        return tickerid
+
+    def stop_getting_IB_market_data(self, tickerid):
+        """
+        Stops the stream of market data and returns all the data
+        we've had since we last asked for it
+
+        :param tickerid: identifier for the request
+        :return: market data
+        """
+
+        # native EClient method
+        self.cancelMktData(tickerid)
+
+        # Sometimes a lag whilst this happens, this prevents 'orphan'
+        # ticks appearing
+        time.sleep(5)
+
+        market_data = self.get_IB_market_data(tickerid)
+
+        # output ay errors
+        while self.wrapper.is_error():
+            print(self.get_error())
+
+        return market_data
+
+    def get_IB_market_data(self, tickerid):
+        """
+        Takes all the market data we have received so far out of the
+        stack, and clear the stack
+        :param tickerid: identifier for the request
+        :return: market data
+        """
+
+        # how long to wait for next item
+        MAX_WAIT_MARKETDATEITEM = 5
+        market_data_q = self._market_data_q_dict[tickerid]
+
+        market_data = []
+        finished = False
+
+        while not finished:
+            try:
+                market_data.append(market_data_q.get(timeout=MAX_WAIT_MARKETDATEITEM))
+            except queue.Empty:
+                # no more data
+                finished = True
+
+        return stream_of_ticks(market_data)
+
+    def get_IB_historical_data(self, ibcontract, duration=MAX_DAYS_HISTORY, barSizeSetting="1 day",
                                tickerid=DEFAULT_HISTORIC_DATA_ID):
         """
         Returns historical prices for a contract, up to today
@@ -267,8 +476,8 @@ class IBClient(EClient):
             tickerid,  # tickerId,
             ibcontract,  # contract,
             datetime.datetime.today().strftime("%Y%m%d %H:%M:%S %Z"),  # endDateTime,
-            MAX_DAYS_HISTORY,  # durationStr,
-            barSizeSetting,  # barSizeSetting,
+            duration,
+            barSizeSetting,
             "TRADES",  # whatToShow,
             1,  # useRTH,
             1,  # formatDate
@@ -277,16 +486,15 @@ class IBClient(EClient):
         )
 
         # Wait until we get a completed data, an error, or get bored waiting
-        print("Getting historical data from the server... could take %d seconds to complete " %
-              MAX_WAIT_SECONDS)
-
         historic_data = historic_data_queue.get(timeout=MAX_WAIT_SECONDS)
 
         try:
             while self.wrapper.is_error():
+                logging.debug("RAISE 5")
                 raise HistoricalDataRetrieveException(ibcontract.symbol, self.get_error())
 
             if historic_data_queue.timed_out():
+                logging.debug("RAISE 6")
                 raise HistoricalDataTimeoutException(ibcontract.symbol,
                                                      "Exceeded maximum wait \
                                                      for wrapper to confirm \

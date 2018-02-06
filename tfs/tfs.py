@@ -9,7 +9,7 @@ import pandas as pd
 from datetime import datetime
 from utils import futures
 
-from utils.strategies import Strategy, Unit
+from utils.strategies import TFS, Unit
 
 from ib import ib
 from ibapi.contract import Contract
@@ -28,15 +28,6 @@ if __name__ == '__main__':
     # read config file
     config = configparser.ConfigParser()
     config.read('config/settings.cfg')
-
-    atr_horizon = int(config['tfs']['atr_horizon'])
-    entry_breakout_periods = int(config['tfs']['entry_breakout_periods'])
-    exit_breakout_periods = int(config['tfs']['exit_breakout_periods'])
-    account_risk = decimal.Decimal(config['tfs']['account_risk'])
-    unit_stop = int(config['tfs']['unit_stop'])
-    first_unit_stop = int(config['tfs']['first_unit_stop'])
-    nr_equities = int(config['tfs']['nr_equities'])
-    nr_units = int(config['tfs']['nr_units'])
 
     futures_list = {}
     for f in config.items('futures_list'):
@@ -62,58 +53,12 @@ if __name__ == '__main__':
 
     current_time = app.get_time()
 
-    strat = Strategy()
+    tfs_strat = TFS()
 
     if eod:
-        for p in config.items('portfolio'):
-            ticker = p[0].upper()
-            exchange = p[1].split(',')[1].lstrip()
-            sec_type = p[1].split(',')[2].lstrip()
-
-            ibcontract = Contract()
-            ibcontract.secType = sec_type
-            ibcontract.symbol = ticker
-            ibcontract.exchange = exchange
-            ibcontract.currency = 'USD'
-
-            resolved_ibcontract = app.resolve_ib_contract(ibcontract)
-
-            historic_data = app.get_IB_historical_data(resolved_ibcontract)
-
-            time.sleep(5)
-            if historic_data is not None:
-                eod_data = {}
-                df = pd.DataFrame(historic_data,
-                                  columns=['date', 'open', 'high',
-                                           'low', 'close', 'volume'])
-                df = df.set_index('date')
-
-                eod_data['ticker'] = ticker
-                eod_data['atr'] = strat.calculate_atr(atr_horizon, df)
-                eod_data['entry_high'] = strat.calc_nday_high(
-                    entry_breakout_periods, df)
-                eod_data['entry_low'] = strat.calc_nday_low(
-                    entry_breakout_periods, df)
-                eod_data['exit_high'] = strat.calc_nday_high(
-                    exit_breakout_periods, df)
-                eod_data['exit_low'] = strat.calc_nday_low(
-                    exit_breakout_periods, df)
-
-                capital = 10500
-                price = eod_data['entry_high']
-                unit = Unit(capital, price, eod_data['atr'],
-                            account_risk=account_risk, unit_stop=unit_stop,
-                            first_unit_stop=first_unit_stop,
-                            nr_equities=nr_equities, nr_units=nr_units)
-                position_size = unit.calc_position_size()
-                stop_level = unit.calc_stop_level(eod_data['atr'],
-                                                  price, first_unit=False)
-
-                print(eod_data, position_size, stop_level)
-                # print(df)
-
-            app.init_error()
-
+        eod_data = tfs_strat.eod_data(config.items('portfolio'), ib=app,
+                                      config=config)
+        print(eod_data)
         try:
             app.disconnect()
         except AttributeError as exp:
@@ -129,10 +74,10 @@ if __name__ == '__main__':
         security_type = future_meta_data[2].lstrip()
         for month in expiration_months:
             ibcontract = Contract()
-            #ibcontract.secType = security_type
-            #ibcontract.symbol = future.upper()
-            #ibcontract.exchange = exchange_future
-            #ibcontract.lastTradeDateOrContractMonth = month
+            # ibcontract.secType = security_type
+            # ibcontract.symbol = future.upper()
+            # ibcontract.exchange = exchange_future
+            # ibcontract.lastTradeDateOrContractMonth = month
 
             ibcontract.secType = "FUT"
             ibcontract.symbol = "GE"
@@ -176,9 +121,9 @@ if __name__ == '__main__':
 
                 input('stop even')
 
-                #historic_data = app.get_IB_historical_data(resolved_ibcontract)
+                # historic_data = app.get_IB_historical_data(resolved_ibcontract)
                 # if historic_data is not None:
-                #df = pd.DataFrame(historic_data)
+                # df = pd.DataFrame(historic_data)
                 # print(df) # voor later
 
     print('Finished.')

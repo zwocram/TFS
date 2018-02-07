@@ -47,7 +47,8 @@ class Unit(object):
 
 
 class TFS(Strategy):
-    def eod_data(self, instrument_list, ib=None, config=None):
+    def eod_data(self, instrument_list, ib=None, config=None,
+                 account_size=0):
         app = ib
 
         atr_horizon = int(config['tfs']['atr_horizon'])
@@ -87,17 +88,21 @@ class TFS(Strategy):
 
                 eod_data['ticker'] = ticker
                 eod_data['atr'] = self._calculate_atr(atr_horizon, df)
-                eod_data['NDayHighEntry'] = self._calc_nday_high(
+                eod_data['55DayHigh'] = self._calc_nday_high(
                     entry_breakout_periods, df)
-                eod_data['NDayLowEntry'] = self._calc_nday_low(
+                eod_data['55DayLow'] = self._calc_nday_low(
                     entry_breakout_periods, df)
-                eod_data['NDayHighExit'] = self._calc_nday_high(
+                eod_data['20DayHigh'] = self._calc_nday_high(
                     exit_breakout_periods, df)
-                eod_data['NDayLowExit'] = self._calc_nday_low(
+                eod_data['20DayLow'] = self._calc_nday_low(
                     exit_breakout_periods, df)
+                eod_data['open'] = self._calc_today_open(df)
+                eod_data['high'] = self._calc_today_high(df)
+                eod_data['low'] = self._calc_today_low(df)
+                eod_data['close'] = self._calc_today_close(df)
 
-                capital = 10500
-                price = eod_data['NDayHighEntry']
+                capital = account_size
+                price = eod_data['close']
                 unit = Unit(capital, price, eod_data['atr'],
                             account_risk=account_risk, unit_stop=unit_stop,
                             first_unit_stop=first_unit_stop,
@@ -137,9 +142,31 @@ class TFS(Strategy):
         return float("{0:.4f}".format(atr))
 
     def _calc_nday_high(self, period, df):
-        nday_high = df.high.max()
+        """Calculate N day high excluding today prices"""
+        nday_high = df[:-1][-period:].high.max()
         return float("{0:.2f}".format(nday_high))
 
     def _calc_nday_low(self, period, df):
-        nday_low = df.low.min()
+        """Calculate N day low excluding today prices"""
+        nday_low = df[:-1][-period:].low.min()
         return float("{0:.2f}".format(nday_low))
+
+    def _calc_today_open(self, df):
+        """Calculate today's open price."""
+        today_open = df[-1:].open.min()
+        return float("{0:.2f}".format(today_open))
+
+    def _calc_today_high(self, df):
+        """Calculate today's high price."""
+        today_high = df[-1:].high.min()
+        return float("{0:.2f}".format(today_high))
+
+    def _calc_today_low(self, df):
+        """Calculate today's low price."""
+        today_low = df[-1:].low.min()
+        return float("{0:.2f}".format(today_low))
+
+    def _calc_today_close(self, df):
+        """Calculate today's close price."""
+        today_close = df[-1:].close.min()
+        return float("{0:.2f}".format(today_close))

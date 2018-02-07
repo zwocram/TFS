@@ -55,9 +55,11 @@ if __name__ == '__main__':
 
     tfs_strat = TFS()
 
+    account_size = float(app.get_account_summary(9001))
+
     if eod:
         eod_data = tfs_strat.eod_data(config.items('portfolio'), ib=app,
-                                      config=config)
+                                      config=config, account_size=account_size)
         print(eod_data)
         try:
             app.disconnect()

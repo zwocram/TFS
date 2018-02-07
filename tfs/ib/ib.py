@@ -37,7 +37,7 @@ MAX_WAIT_SECONDS = 10
 DEFAULT_GET_CONTRACT_ID = 1001
 DEFAULT_HISTORIC_DATA_ID = 50
 DEFAULT_GET_CONTRACT_ID = 43
-MAX_DAYS_HISTORY = '55 D'
+MAX_DAYS_HISTORY = '60 D'
 DEFAULT_MARKET_DATA_ID = 50
 DEFAULT_GET_CONTRACT_ID = 43
 
@@ -45,6 +45,10 @@ DEFAULT_GET_CONTRACT_ID = 43
 FINISHED = object()
 STARTED = object()
 TIME_OUT = object()
+
+ACCOUNT_UPDATE_FLAG = "update"
+ACCOUNT_VALUE_FLAG = "value"
+ACCOUNT_TIME_FLAG = "time"
 
 
 class finishableQueue(object):
@@ -188,6 +192,7 @@ class IBWrapper(EWrapper):
     _contract_details = {}
     _my_historic_data_dict = {}
     _accepted_error_codes = [2106, 2107]
+    _my_accounts = {}
 
     def __init__(self):
         self._my_contract_details = {}
@@ -318,6 +323,23 @@ class IBWrapper(EWrapper):
 
         this_tick_data = IBtick(self.get_time_stamp(), tickType, value)
         self._my_market_data_dict[tickerid].put(this_tick_data)
+
+    # get account summary
+    def init_accounts(self, reqId):
+        accounting_queue = self._my_accounts[reqId] = queue.Queue()
+
+        return accounting_queue
+
+    def accountSummary(self, reqId: int, account: str, tag: str, value: str,
+                       currency: str):
+
+        # use this to seperate out different account data
+
+        data = (reqId, account, tag, value, currency)
+        self._my_accounts[reqId].put(data)
+
+    def accountSummaryEnd(self, reqId: int):
+        self._my_accounts[reqId].put(FINISHED)
 
 
 class IBClient(EClient):
@@ -460,7 +482,8 @@ class IBClient(EClient):
 
         return stream_of_ticks(market_data)
 
-    def get_IB_historical_data(self, ibcontract, duration=MAX_DAYS_HISTORY, barSizeSetting="1 day",
+    def get_IB_historical_data(self, ibcontract, duration=MAX_DAYS_HISTORY,
+                               barSizeSetting="1 day",
                                tickerid=DEFAULT_HISTORIC_DATA_ID):
         """
         Returns historical prices for a contract, up to today
@@ -490,11 +513,9 @@ class IBClient(EClient):
 
         try:
             while self.wrapper.is_error():
-                logging.debug("RAISE 5")
                 raise HistoricalDataRetrieveException(ibcontract.symbol, self.get_error())
 
             if historic_data_queue.timed_out():
-                logging.debug("RAISE 6")
                 raise HistoricalDataTimeoutException(ibcontract.symbol,
                                                      "Exceeded maximum wait \
                                                      for wrapper to confirm \
@@ -507,6 +528,21 @@ class IBClient(EClient):
         self.cancelHistoricalData(tickerid)
 
         return historic_data
+
+    def get_account_summary(self, reqId):
+        """
+        Get the accounting values from IB server
+        :return: accounting values as served up by IB
+        """
+
+        info_to_retrieve = "TotalCashValue"
+        accounting_queue = finishableQueue(self.init_accounts(reqId))
+        self.reqAccountSummary(reqId, "All", info_to_retrieve)
+
+        # Wait until we get a complete account data set.
+        accounting_data = accounting_queue.get(timeout=MAX_WAIT_SECONDS)
+
+        return accounting_data[0][3]
 
 
 class IB(IBWrapper, IBClient):

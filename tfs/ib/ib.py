@@ -334,7 +334,6 @@ class IBWrapper(EWrapper):
                        currency: str):
 
         # use this to seperate out different account data
-
         data = (reqId, account, tag, value, currency)
         self._my_accounts[reqId].put(data)
 
@@ -513,7 +512,8 @@ class IBClient(EClient):
 
         try:
             while self.wrapper.is_error():
-                raise HistoricalDataRetrieveException(ibcontract.symbol, self.get_error())
+                raise HistoricalDataRetrieveException(ibcontract.symbol,
+                                                      self.get_error())
 
             if historic_data_queue.timed_out():
                 raise HistoricalDataTimeoutException(ibcontract.symbol,
@@ -530,19 +530,18 @@ class IBClient(EClient):
         return historic_data
 
     def get_account_summary(self, reqId):
-        """
+        """i
         Get the accounting values from IB server
         :return: accounting values as served up by IB
         """
 
-        info_to_retrieve = "TotalCashValue"
+        info_to_retrieve = "NetLiquidation,BuyingPower"
         accounting_queue = finishableQueue(self.init_accounts(reqId))
         self.reqAccountSummary(reqId, "All", info_to_retrieve)
 
         # Wait until we get a complete account data set.
         accounting_data = accounting_queue.get(timeout=MAX_WAIT_SECONDS)
-
-        return accounting_data[0][3]
+        return accounting_data
 
 
 class IB(IBWrapper, IBClient):

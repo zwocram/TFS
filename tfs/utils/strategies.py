@@ -16,13 +16,12 @@ class Strategy(object):
 
 class Unit(object):
 
-    def __init__(self, capital, price, atr,
+    def __init__(self, capital, atr,
                  account_risk=0.02, unit_stop=2,
                  first_unit_stop=1, nr_equities=6,
                  nr_units=4):
 
         self.capital = capital
-        self.price = price
         self.atr = atr
         self.account_risk = account_risk
         self.unit_stop = unit_stop
@@ -30,18 +29,25 @@ class Unit(object):
         self.nr_equities = nr_equities
         self.nr_units = nr_units
 
-    def calc_position_size(self):
+    def calc_position_size(self, price):
         self.pos_size = (self.capital / (self.nr_equities * self.nr_units)) \
-            / self.price
+            / price
 
         return math.floor(self.pos_size)
 
-    def calc_stop_level(self, atr, entry_price, first_unit=False):
+    def calc_stop_level(self, atr, entry_price, position_type,
+                        first_unit=False):
         self.stop_level = None
         if first_unit:
-            self.stop_level = entry_price - atr
+            if position_type == "long":
+                self.stop_level = entry_price - atr
+            elif position_type == "short":
+                self.stop_level = entry_price + atr
         else:
-            self.stop_level = entry_price - 2 * atr
+            if position_type == "long":
+                self.stop_level = entry_price - 2 * atr
+            elif position_type == "short":
+                self.stop_level = entry_price + 2 * atr
 
         return float("{0:.2f}".format(self.stop_level))
 
@@ -84,6 +90,8 @@ class TFS(Strategy):
                 df = pd.DataFrame(historic_data,
                                   columns=['date', 'open', 'high',
                                            'low', 'close', 'volume'])
+                eod_data['date'] = df.iloc[-1, df.columns.get_loc('date')]
+
                 df = df.set_index('date')
 
                 eod_data['ticker'] = ticker
@@ -102,15 +110,24 @@ class TFS(Strategy):
                 eod_data['close'] = self._calc_today_close(df)
 
                 capital = account_size
-                price = eod_data['close']
-                unit = Unit(capital, price, eod_data['atr'],
+                unit = Unit(capital, eod_data['atr'],
                             account_risk=account_risk, unit_stop=unit_stop,
                             first_unit_stop=first_unit_stop,
                             nr_equities=nr_equities, nr_units=nr_units)
-                eod_data['position_size'] = unit.calc_position_size()
-                eod_data['stop_level'] = unit.calc_stop_level(eod_data['atr'],
-                                                              price,
-                                                              first_unit=False)
+
+                nday_high_price = eod_data['55DayHigh']
+                nday_low_price = eod_data['55DayLow']
+                eod_data['position_size'] = \
+                    unit.calc_position_size(self._calc_today_close(df))
+                eod_data['stp_long'] = \
+                    unit.calc_stop_level(eod_data['atr'],
+                                         nday_high_price, "long",
+                                         first_unit=False)
+                eod_data['stp_short'] = \
+                    unit.calc_stop_level(eod_data['atr'],
+                                         nday_low_price, "short",
+                                         first_unit=False)
+
                 df_temp = pd.DataFrame(eod_data, index=[ticker])
                 eod_df = eod_df.append(df_temp)
                 # print(eod_data, position_size, stop_level)

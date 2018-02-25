@@ -359,15 +359,12 @@ class IBClient(EClient):
         :return: unix time, as an int
         """
 
-        print("Getting the time from the server... ")
-
         # This is the native method in EClient,
         # asks the server to send us the time please
         self.reqCurrentTime()
 
         try:
             current_time = self._msg_queue.get(timeout=MAX_WAIT_SECONDS)
-            print('and the time is....', current_time)
         except queue.Empty:
             print("Exceeded maximum wait for wrapper to respond")
 
@@ -490,6 +487,11 @@ class IBClient(EClient):
         :returns list of prices in 4 tuples: Open high low close volume
         """
 
+        if ibcontract.secType in ("CASH", "CFD"):
+            what_to_show = "MIDPOINT"
+        else:
+            what_to_show = "TRADES"
+
         # Make a place to store the data we're going to return
         historic_data_queue = finishableQueue(self.init_historicprices(tickerid))
 
@@ -500,7 +502,7 @@ class IBClient(EClient):
             datetime.datetime.today().strftime("%Y%m%d %H:%M:%S %Z"),  # endDateTime,
             duration,
             barSizeSetting,
-            "TRADES",  # whatToShow,
+            what_to_show,  # whatToShow,
             1,  # useRTH,
             1,  # formatDate
             False,  # KeepUpToDate <<==== added for api 9.73.2

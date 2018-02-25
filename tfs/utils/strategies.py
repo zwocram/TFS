@@ -16,40 +16,67 @@ class Strategy(object):
 
 class Unit(object):
 
-    def __init__(self, capital, atr,
+    def __init__(self, account_size=0, atr=0,
                  account_risk=0.02, unit_stop=2,
                  first_unit_stop=1, nr_equities=6,
-                 nr_units=4):
+                 nr_units=4, ticker=None,
+                 price=0, pos_type=None,
+                 first_unit=False, point_value=1):
 
-        self.capital = capital
+        self.first_unit = first_unit
+        self.point_value = point_value
+        self.price = price
+        self.ticker = ticker
+        self.account_size = account_size
         self.atr = atr
         self.account_risk = account_risk
         self.unit_stop = unit_stop
         self.first_unit_stop = first_unit_stop
         self.nr_equities = nr_equities
         self.nr_units = nr_units
+        if pos_type is None:
+            self.stop_level = 0
+        else:
+            self.stop_level = self._calc_stop_level(atr, price,
+                                                    pos_type, first_unit)
 
-    def calc_position_size(self, price):
-        self.pos_size = (self.capital / (self.nr_equities * self.nr_units)) \
-            / price
+    def _calc_position_size_equal_units(self, price):
+        """Calculate position size based on equal unit sizing.
+        """
+        pos_size = math.floor((self.account_size /
+                               (self.nr_equities * self.nr_units))
+                              / price)
 
-        return math.floor(self.pos_size)
+        return pos_size
 
-    def calc_stop_level(self, atr, entry_price, position_type,
-                        first_unit=False):
-        self.stop_level = None
+    def calc_position_size_risk_perc(self, first_unit=False):
+        """Calculate position size based on risk percentage.
+        """
+        if first_unit:
+            stop = self.first_unit_stop
+        else:
+            stop = self.unit_stop
+
+        pos_size = math.floor((self.account_size * float(self.account_risk)) /
+                              (stop * self.atr * self.point_value))
+
+        return pos_size
+
+    def _calc_stop_level(self, atr, entry_price, position_type,
+                         first_unit=False):
+        stop_level = None
         if first_unit:
             if position_type == "long":
-                self.stop_level = entry_price - atr
+                stop_level = entry_price - atr
             elif position_type == "short":
-                self.stop_level = entry_price + atr
+                stop_level = entry_price + atr
         else:
             if position_type == "long":
-                self.stop_level = entry_price - 2 * atr
+                stop_level = entry_price - 2 * atr
             elif position_type == "short":
-                self.stop_level = entry_price + 2 * atr
+                stop_level = entry_price + 2 * atr
 
-        return float("{0:.2f}".format(self.stop_level))
+        return float("{0:.2f}".format(stop_level))
 
 
 class TFS(Strategy):
@@ -72,13 +99,14 @@ class TFS(Strategy):
             ticker = p[0].upper()
             exchange = p[1].split(',')[1].lstrip()
             sec_type = p[1].split(',')[2].lstrip()
+            currency = p[1].split(',')[3].lstrip().upper()
 
             ibcontract = Contract()
             ibcontract.secType = sec_type
             ibcontract.symbol = ticker
             ibcontract.exchange = exchange
-            ibcontract.currency = 'USD'
-            print('processing ', ticker)
+            ibcontract.currency = currency
+            print('processing', ticker)
 
             resolved_ibcontract = app.resolve_ib_contract(ibcontract)
 
@@ -110,28 +138,19 @@ class TFS(Strategy):
                 eod_data['close'] = self._calc_today_close(df)
 
                 capital = account_size
-                unit = Unit(capital, eod_data['atr'],
+                unit = Unit(account_size=capital, atr=eod_data['atr'],
                             account_risk=account_risk, unit_stop=unit_stop,
                             first_unit_stop=first_unit_stop,
-                            nr_equities=nr_equities, nr_units=nr_units)
+                            nr_equities=nr_equities, nr_units=nr_units,
+                            ticker=ticker, price=self._calc_today_close(df))
 
-                nday_high_price = eod_data['55DayHigh']
-                nday_low_price = eod_data['55DayLow']
-                eod_data['position_size'] = \
-                    unit.calc_position_size(self._calc_today_close(df))
-                eod_data['stp_long'] = \
-                    unit.calc_stop_level(eod_data['atr'],
-                                         nday_high_price, "long",
-                                         first_unit=False)
-                eod_data['stp_short'] = \
-                    unit.calc_stop_level(eod_data['atr'],
-                                         nday_low_price, "short",
-                                         first_unit=False)
+                eod_data['pos_size (1st)'] = \
+                    unit.calc_position_size_risk_perc(first_unit=True)
+                eod_data['pos_size (other)'] = \
+                    unit.calc_position_size_risk_perc(first_unit=False)
 
                 df_temp = pd.DataFrame(eod_data, index=[ticker])
                 eod_df = eod_df.append(df_temp)
-                # print(eod_data, position_size, stop_level)
-                # print(df)
 
             app.init_error()
 

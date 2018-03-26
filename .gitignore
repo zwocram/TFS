@@ -2,4 +2,7 @@ tfs_env/*
 examples/*
 *pyc
 tfs/logs/*
+tfs/tfs.db
+tfs/db/db.py
 tfs/db/tfs.db
+tfs/correlations/us.csv

@@ -96,17 +96,18 @@ class TFS(Strategy):
         eod_df = pd.DataFrame()
 
         for p in instrument_list:
-            ticker = p[0].upper()
+            identifier = p[0].upper()
             exchange = p[1].split(',')[1].lstrip()
             sec_type = p[1].split(',')[2].lstrip()
             currency = p[1].split(',')[3].lstrip().upper()
+            ticker = p[1].split(',')[4].lstrip().upper()
 
             ibcontract = Contract()
             ibcontract.secType = sec_type
             ibcontract.symbol = ticker
             ibcontract.exchange = exchange
             ibcontract.currency = currency
-            print('processing', ticker)
+            print('processing', identifier)
 
             resolved_ibcontract = app.resolve_ib_contract(ibcontract)
 
@@ -121,8 +122,9 @@ class TFS(Strategy):
                 eod_data['date'] = df.iloc[-1, df.columns.get_loc('date')]
 
                 df = df.set_index('date')
+                df = self._invert_exchange_rate(df, identifier)
 
-                eod_data['ticker'] = ticker
+                eod_data['ticker'] = identifier
                 eod_data['atr'] = self._calculate_atr(atr_horizon, df)
                 eod_data['55DayHigh'] = self._calc_nday_high(
                     entry_breakout_periods, df)
@@ -142,19 +144,34 @@ class TFS(Strategy):
                             account_risk=account_risk, unit_stop=unit_stop,
                             first_unit_stop=first_unit_stop,
                             nr_equities=nr_equities, nr_units=nr_units,
-                            ticker=ticker, price=self._calc_today_close(df))
+                            ticker=identifier, price=self._calc_today_close(df))
 
                 eod_data['pos_size (1st)'] = \
                     unit.calc_position_size_risk_perc(first_unit=True)
                 eod_data['pos_size (other)'] = \
                     unit.calc_position_size_risk_perc(first_unit=False)
 
-                df_temp = pd.DataFrame(eod_data, index=[ticker])
+                df_temp = pd.DataFrame(eod_data, index=[identifier])
                 eod_df = eod_df.append(df_temp)
 
             app.init_error()
 
         return eod_df
+
+    def _invert_exchange_rate(self, df, ticker):
+        """invert prices of exchange rates, e.g.
+        from USDJPY to JPYUSD
+        """
+        to_invert = ['USDJPY']
+
+        df_temp = df
+        if ticker in to_invert:
+            df_temp['open'] = 1 / df_temp['open']
+            df_temp['high'] = 1 / df_temp['high']
+            df_temp['low'] = 1 / df_temp['low']
+            df_temp['close'] = 1 / df_temp['close']
+
+        return df_temp
 
     def _calculate_atr(self, period, df):
         df_temp = df
@@ -180,29 +197,39 @@ class TFS(Strategy):
     def _calc_nday_high(self, period, df):
         """Calculate N day high excluding today prices"""
         nday_high = df[:-1][-period:].high.max()
-        return float("{0:.2f}".format(nday_high))
+        return float("{0:.4f}".format(nday_high))
 
     def _calc_nday_low(self, period, df):
         """Calculate N day low excluding today prices"""
         nday_low = df[:-1][-period:].low.min()
-        return float("{0:.2f}".format(nday_low))
+        return float("{0:.4f}".format(nday_low))
 
     def _calc_today_open(self, df):
         """Calculate today's open price."""
         today_open = df[-1:].open.min()
-        return float("{0:.2f}".format(today_open))
+        return float("{0:.4f}".format(today_open))
 
     def _calc_today_high(self, df):
         """Calculate today's high price."""
         today_high = df[-1:].high.min()
-        return float("{0:.2f}".format(today_high))
+        return float("{0:.4f}".format(today_high))
 
     def _calc_today_low(self, df):
         """Calculate today's low price."""
         today_low = df[-1:].low.min()
-        return float("{0:.2f}".format(today_low))
+        return float("{0:.4f}".format(today_low))
 
     def _calc_today_close(self, df):
         """Calculate today's close price."""
         today_close = df[-1:].close.min()
-        return float("{0:.2f}".format(today_close))
+        return float("{0:.4f}".format(today_close))
+
+    def _set_price_formatting(self, security_type):
+        """Set formatting of prices.
+        """
+        if security_type == "CASH":
+            formatting = "{0:.4f}"
+        else:
+            formatting = "{0:.2f}"
+
+        return formatting

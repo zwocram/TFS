@@ -11,6 +11,7 @@ import time
 from utils import futures
 
 from utils.strategies import TFS, Unit
+from utils.driver import Driver
 from db.database import Database
 
 from ib import ib
@@ -70,13 +71,14 @@ if __name__ == '__main__':
 
     db = Database()
     tfs_strat = TFS()
+    driver = Driver()
 
-    account_info = app.get_account_summary(9001)
-    buying_power = float([a[3] for a in account_info
-                          if a[2] == 'BuyingPower'][0])
-    account_size = float([a[3] for a in account_info
-                          if a[2] == 'NetLiquidation'][0])
+    account_info = driver.get_account_data(app)
+    buying_power = account_info[0]
+    account_size = account_info[1]
+    forex_data = driver.get_forex_market_data(app, config.items('forex'))
 
+    pdb.set_trace()
     current_time = app.get_time()
 
     minute_interval = 5
@@ -135,6 +137,9 @@ if __name__ == '__main__':
 
             print("=============================")
             print("Account size: ", account_size)
+            print("=============================")
+            print("Forex market data:\n")
+            print(forex_data)
             print("=============================")
             print("Daily recap:\n", eod_data)
             shorts = eod_data.loc[eod_data['close'] < eod_data['55DayLow']]

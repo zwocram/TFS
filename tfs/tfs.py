@@ -142,13 +142,13 @@ if __name__ == '__main__':
                 print("=============================")
                 print("Potential short candidates:\n\n",
                       shorts[['date', 'close', 'atr',
-                              'position_size', 'stp_short']])
+                              'pos_size (1st)']])
             longs = eod_data.loc[eod_data['close'] > eod_data['55DayHigh']]
             if longs.shape[0] > 0:
                 print("=============================")
                 print("Potential long candidates:\n\n",
                       longs[['date', 'close', 'atr',
-                             'position_size', 'stp_long']])
+                             'pos_size (1st)']])
 
             print("\n=============================\n")
             for index, row in eod_data.iterrows():

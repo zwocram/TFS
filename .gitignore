@@ -6,3 +6,4 @@ tfs/tfs.db
 tfs/db/db.py
 tfs/db/tfs.db
 tfs/correlations/us.csv
+tfs/trendfollowing.py

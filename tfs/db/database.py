@@ -116,12 +116,19 @@ class Database(object):
         elif position_type == "short":
             price_target = unit.price - unit.atr
 
+        if unit_id > 1:
+            first_unit = False
+        else:
+            first_unit = True
+
         sql = """
             insert into Unit(unit_id, pos_id, entry_price,
                 atr, next_price_target, pos_size, stop_price)
             values({0}, {1}, {2}, {3}, {4}, {5}, {6})
             """.format(unit_id, position_id, unit.price,
-                       unit.atr, price_target, unit.pos_size,
+                       unit.atr, price_target,
+                       unit.calc_position_size_risk_perc(
+                           first_unit=first_unit),
                        unit.stop_level)
 
         return self._exec_query(sql).lastrowid
@@ -178,7 +185,7 @@ class Database(object):
 
             stop_price = float("{0:.2f}".format(position_info.loc[
                 position_info['unit_id'] ==
-                position_info.unit_id.max()].stop_price[1]))
+                position_info.unit_id.max()].stop_price.iloc[0]))
 
             sql = """
                 update Position

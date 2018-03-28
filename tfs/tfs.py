@@ -76,9 +76,14 @@ if __name__ == '__main__':
     account_info = driver.get_account_data(app)
     buying_power = account_info[0]
     account_size = account_info[1]
-    forex_data = driver.get_forex_market_data(app, config.items('forex'))
+    hist_data = []
+    for instr in config.items('forex'):
+        forex_data = driver.get_historical_data(app,
+                                                instr,
+                                                "1 D",
+                                                sleep_time=4)
+        hist_data.append(forex_data)
 
-    pdb.set_trace()
     current_time = app.get_time()
 
     minute_interval = 5
@@ -122,9 +127,9 @@ if __name__ == '__main__':
             print("Starting end of day process at {0}."
                   "".format(datetime.datetime.now().time()))
             eod_job_started = True
-
-            eod_data = tfs_strat.eod_data(config.items('portfolio'), ib=app,
-                                          config=config,
+            eod_data = tfs_strat.eod_data(ib=app,
+                                          portfolio_list=config.items('portfolio'),
+                                          tfs_settings=config['tfs'],
                                           account_size=account_size)
             print(eod_data)
 

@@ -7,11 +7,13 @@ import numpy as np
 import pandas as pd
 import pdb
 
+from utils.driver import Driver
 from ibapi.contract import Contract
 
 
 class Strategy(object):
-    pass
+    def __init__(self):
+        self.driver = Driver()
 
 
 class Unit(object):
@@ -80,40 +82,22 @@ class Unit(object):
 
 
 class TFS(Strategy):
-    def eod_data(self, instrument_list, ib=None, config=None,
+    def eod_data(self, ib=None, portfolio_list=None, tfs_settings=None,
                  account_size=0):
-        app = ib
+        """Retrieves market data at end of day.
 
-        atr_horizon = int(config['tfs']['atr_horizon'])
-        entry_breakout_periods = int(config['tfs']['entry_breakout_periods'])
-        exit_breakout_periods = int(config['tfs']['exit_breakout_periods'])
-        account_risk = decimal.Decimal(config['tfs']['account_risk'])
-        unit_stop = int(config['tfs']['unit_stop'])
-        first_unit_stop = int(config['tfs']['first_unit_stop'])
-        nr_equities = int(config['tfs']['nr_equities'])
-        nr_units = int(config['tfs']['nr_units'])
+        :param portfolio: portfolio list as in settings.cfg
+        :param ib
+
+        """
+        app = ib
+        tfs_settings = self.driver.get_tfs_settings(tfs_settings)
 
         eod_df = pd.DataFrame()
 
-        for p in instrument_list:
-            identifier = p[0].upper()
-            exchange = p[1].split(',')[1].lstrip()
-            sec_type = p[1].split(',')[2].lstrip()
-            currency = p[1].split(',')[3].lstrip().upper()
-            ticker = p[1].split(',')[4].lstrip().upper()
+        for p in portfolio_list:
+            historic_data = self.driver.get_historical_data(ib, p)
 
-            ibcontract = Contract()
-            ibcontract.secType = sec_type
-            ibcontract.symbol = ticker
-            ibcontract.exchange = exchange
-            ibcontract.currency = currency
-            print('processing', identifier)
-
-            resolved_ibcontract = app.resolve_ib_contract(ibcontract)
-
-            historic_data = app.get_IB_historical_data(resolved_ibcontract)
-
-            time.sleep(5)
             if historic_data is not None:
                 eod_data = {}
                 df = pd.DataFrame(historic_data,
@@ -122,36 +106,15 @@ class TFS(Strategy):
                 eod_data['date'] = df.iloc[-1, df.columns.get_loc('date')]
 
                 df = df.set_index('date')
-                df = self._invert_exchange_rate(df, identifier)
 
-                eod_data['ticker'] = identifier
-                eod_data['atr'] = self._calculate_atr(atr_horizon, df)
-                eod_data['55DayHigh'] = self._calc_nday_high(
-                    entry_breakout_periods, df)
-                eod_data['55DayLow'] = self._calc_nday_low(
-                    entry_breakout_periods, df)
-                eod_data['20DayHigh'] = self._calc_nday_high(
-                    exit_breakout_periods, df)
-                eod_data['20DayLow'] = self._calc_nday_low(
-                    exit_breakout_periods, df)
-                eod_data['open'] = self._calc_today_open(df)
-                eod_data['high'] = self._calc_today_high(df)
-                eod_data['low'] = self._calc_today_low(df)
-                eod_data['close'] = self._calc_today_close(df)
+                # ret_values = self._invert_exchange_rate(df, identifier)
+                # identifier = ret_values[0]
+                # df = ret_values[1]
 
-                capital = account_size
-                unit = Unit(account_size=capital, atr=eod_data['atr'],
-                            account_risk=account_risk, unit_stop=unit_stop,
-                            first_unit_stop=first_unit_stop,
-                            nr_equities=nr_equities, nr_units=nr_units,
-                            ticker=identifier, price=self._calc_today_close(df))
+                eod_data = self._enrich_eod(p[0].upper(), eod_data, df,
+                                            tfs_settings, account_size)
 
-                eod_data['pos_size (1st)'] = \
-                    unit.calc_position_size_risk_perc(first_unit=True)
-                eod_data['pos_size (other)'] = \
-                    unit.calc_position_size_risk_perc(first_unit=False)
-
-                df_temp = pd.DataFrame(eod_data, index=[identifier])
+                df_temp = pd.DataFrame(eod_data, index=[p[0].upper()])
                 eod_df = eod_df.append(df_temp)
 
             app.init_error()
@@ -161,17 +124,27 @@ class TFS(Strategy):
     def _invert_exchange_rate(self, df, ticker):
         """invert prices of exchange rates, e.g.
         from USDJPY to JPYUSD
+
+        :param df: dataframe for which values have to inverted
+        :param ticker: ticker whose values have to be inverted
+
+        :return: inverted tickername, inverted values
         """
-        to_invert = ['USDJPY']
+        to_invert = ['USDJPY', 'EURGBP', 'EURCHF', 'EURHKD', 'EURJPY',
+                     'EURAUD', 'EURCAD', 'EURCNH', 'EURCZK', 'EURDKK',
+                     'EURHUF', 'EURILS', 'EURMXN', 'EURNOK', 'EURNZD',
+                     'EURPLN', 'EURRUB', 'EURSEK', 'EURSGD', 'EURUSD',
+                     'EURZAR']
 
         df_temp = df
         if ticker in to_invert:
+            ticker = ticker[3:6] + ticker[0:3]
             df_temp['open'] = 1 / df_temp['open']
             df_temp['high'] = 1 / df_temp['high']
             df_temp['low'] = 1 / df_temp['low']
             df_temp['close'] = 1 / df_temp['close']
 
-        return df_temp
+        return ticker, df_temp
 
     def _calculate_atr(self, period, df):
         df_temp = df
@@ -192,7 +165,46 @@ class TFS(Strategy):
 
         atr = df_temp.iloc[-1, df_temp.columns.get_loc('ATR')]
 
-        return float("{0:.4f}".format(atr))
+        return float("{0:.6f}".format(atr))
+
+    def _enrich_eod(self, identifier, eod_data, df, tfs_params, capital):
+        """Enriches the eod dataset that was received from IB
+
+        :param eod_data: the dataset that has to enriched
+
+        :return: an enriched dataset.
+        """
+
+        eod_data['ticker'] = identifier
+        eod_data['atr'] = self._calculate_atr(tfs_params['atr_horizon'],
+                                              df)
+        eod_data['55DayHigh'] = self._calc_nday_high(
+            tfs_params['entry_breakout_periods'], df)
+        eod_data['55DayLow'] = self._calc_nday_low(
+            tfs_params['entry_breakout_periods'], df)
+        eod_data['20DayHigh'] = self._calc_nday_high(
+            tfs_params['exit_breakout_periods'], df)
+        eod_data['20DayLow'] = self._calc_nday_low(
+            tfs_params['exit_breakout_periods'], df)
+        eod_data['open'] = self._calc_today_open(df)
+        eod_data['high'] = self._calc_today_high(df)
+        eod_data['low'] = self._calc_today_low(df)
+        eod_data['close'] = self._calc_today_close(df)
+
+        unit = Unit(account_size=capital, atr=eod_data['atr'],
+                    account_risk=tfs_params['account_risk'],
+                    unit_stop=tfs_params['unit_stop'],
+                    first_unit_stop=tfs_params['first_unit_stop'],
+                    nr_equities=tfs_params['nr_equities'],
+                    nr_units=tfs_params['nr_units'],
+                    ticker=identifier, price=self._calc_today_close(df))
+
+        eod_data['pos_size (1st)'] = \
+            unit.calc_position_size_risk_perc(first_unit=True)
+        eod_data['pos_size (other)'] = \
+            unit.calc_position_size_risk_perc(first_unit=False)
+
+        return eod_data
 
     def _calc_nday_high(self, period, df):
         """Calculate N day high excluding today prices"""

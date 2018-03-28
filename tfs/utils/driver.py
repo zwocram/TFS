@@ -1,8 +1,9 @@
 import pdb
+import time
+import decimal
 
 from ibapi.contract import Contract
 
-from utils.strategies import TFS, Unit
 from db.database import Database
 
 
@@ -25,7 +26,8 @@ class Driver(object):
 
         return buying_power, account_size
 
-    def get_forex_market_data(self, ib, forex_list):
+    def get_historical_data(self, ib, instrument, duration="60 D",
+                            sleep_time=5):
         """Get daily forex market data.
 
         :param ib: the ib application
@@ -34,24 +36,23 @@ class Driver(object):
         :return: returns dictionary with forex data.
         """
 
-        close_prices = []
-        for f in forex_list:
-            f_metadata = self._get_instrument_metadata(f)
+        f_metadata = self._get_instrument_metadata(instrument)
 
-            contract = self._get_ib_contract(ib,
-                                             f_metadata["sec_type"],
-                                             f_metadata["ticker"],
-                                             f_metadata["exchange"],
-                                             f_metadata["currency"])
+        contract = self._get_ib_contract(ib,
+                                         f_metadata["sec_type"],
+                                         f_metadata["ticker"],
+                                         f_metadata["exchange"],
+                                         f_metadata["currency"])
 
-            historic_data = ib.get_IB_historical_data(contract,
-                                                      duration="1 D")
+        historic_data = ib.get_IB_historical_data(contract,
+                                                  duration=duration)
 
-            close_set = f_metadata["identifier"], \
-                float("{0:.4f}".format(historic_data[0][4]))
-            close_prices.append(close_set)
+        #close_set = f_metadata["identifier"], \
+        #    float("{0:.4f}".format(historic_data[0][4]))
+        time.sleep(sleep_time)
+        ib.init_error()
 
-        return close_prices
+        return historic_data
 
     def _get_ib_contract(self, ib, security_type, symbol, exchange_name,
                          currency):
@@ -93,3 +94,25 @@ class Driver(object):
             instrument[1].split(',')[4].lstrip().upper()
 
         return instrument_props
+
+    def get_tfs_settings(self, tfs_settings=None):
+        """Gets the settings for the trend following strategy
+        from the settings.cfg file.
+
+        :param tfs_settings: the 'tfs' section of the settings file
+
+        :return: returns a dictionary with the tfs settings.
+        """
+
+        tfs_settings_dict = {}
+        tfs_settings_dict['atr_horizon'] = int(tfs_settings['atr_horizon'])
+
+        tfs_settings_dict['entry_breakout_periods'] = int(tfs_settings['entry_breakout_periods'])
+        tfs_settings_dict['exit_breakout_periods'] = int(tfs_settings['exit_breakout_periods'])
+        tfs_settings_dict['account_risk'] = decimal.Decimal(tfs_settings['account_risk'])
+        tfs_settings_dict['unit_stop'] = int(tfs_settings['unit_stop'])
+        tfs_settings_dict['first_unit_stop'] = int(tfs_settings['first_unit_stop'])
+        tfs_settings_dict['nr_equities'] = int(tfs_settings['nr_equities'])
+        tfs_settings_dict['nr_units'] = int(tfs_settings['nr_units'])
+
+        return tfs_settings_dict

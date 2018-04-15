@@ -5,26 +5,31 @@ import decimal
 from ibapi.contract import Contract
 
 from db.database import Database
+from ib.ibexceptions import GetAccountDataException
 
 
 class Driver(object):
     """Class that drives 'The Process'.
     """
 
-    def get_account_data(self, ib):
+    def get_account_data(self, ib, sleep_time=3):
         """Retrieves some data about the IB account.
 
         :param ib: The IB application
         :return: buying power and account size
 
         """
-        account_info = ib.get_account_summary(9001)
-        buying_power = float([a[3] for a in account_info
-                              if a[2] == 'BuyingPower'][0])
-        account_size = float([a[3] for a in account_info
-                              if a[2] == 'NetLiquidation'][0])
 
-        return buying_power, account_size
+        try:
+            account_info = ib.get_account_summary(9001)
+            buying_power = float([a[3] for a in account_info
+                                  if a[2] == 'BuyingPower'][0])
+            account_size = float([a[3] for a in account_info
+                                  if a[2] == 'NetLiquidation'][0])
+            time.sleep(sleep_time)
+            return buying_power, account_size
+        except:
+            raise GetAccountDataException()
 
     def get_historical_data(self, ib, instrument, duration="60 D",
                             sleep_time=5):

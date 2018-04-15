@@ -1,6 +1,8 @@
 import sqlite3
 import pandas as pd
 
+from ib.ibexceptions import *
+
 import pdb
 
 
@@ -41,6 +43,31 @@ class Database(object):
 
     def __del__(self):
         self._db_connection.close()
+
+    def _get_category_id(self, category_name):
+        """Retrieves the category id for a given instrument
+        category name.
+
+        :param category_name: category name of instrument
+
+        :return: the category_id of the given category name
+        """
+
+        category_id = 0
+        try:
+            sql = """
+                select cat_id
+                from InstrumentCategory
+                where cat_description = '{0}'
+                """.format(category_name)
+
+            df = pd.read_sql_query(sql, self._db_connection)
+            category_id = df.cat_id.min()
+            return category_id
+        except:
+            raise GetCategoryIDException("error getting category "
+                                         "id for category name {1}".format(category_name))
+            return category_id
 
     def insert_account_numbers(self, date, account_size, buying_power):
         """
@@ -195,3 +222,60 @@ class Database(object):
                            position_id)
 
             self._exec_query(sql)
+
+    def exists_instrument(self, instrument):
+        """Checks if instrument exists in databaseself.
+
+        :param instrument: tuple of instrument metadata
+
+        :return: False/True if instrument exists or not
+        """
+
+        exists = True
+
+        try:
+            ticker = instrument[1].split(',')[4].lstrip()
+            instrument_category = instrument[1].split(',')[5].lstrip()
+
+            sql = """
+                select
+                    i.ticker
+                    , i.description
+                    , c.cat_description
+                from Instrument i inner join InstrumentCategory c
+                    on i.instr_category_id = c.cat_id
+                where
+                    i.ticker = '{0}'
+                    and c.cat_description = '{1}'
+                """.format(ticker, instrument_category)
+
+            df = pd.read_sql_query(sql, self._db_connection)
+            if df.size == 0:
+                exists = False
+            return exists
+        except:
+            raise CheckInstrumentExistenceException()
+
+    def insert_new_instrument(self, instrument):
+        """Checks if instrument exists in databaseself.
+
+        :param instrument: tuple of instrument metadata
+
+        :return: False/True if instrument exists or not
+        """
+
+        try:
+            ticker = instrument[1].split(',')[4].lstrip()
+            instrument_description = instrument[1].split(',')[0].lstrip()
+            instrument_category = instrument[1].split(',')[5].lstrip()
+            category_id = self._get_category_id(instrument_category)
+
+            sql = """
+                insert into
+                    Instrument(ticker, description, instr_category_id)
+                values('{0}', '{1}', {2})
+                """.format(ticker, instrument_description, category_id)
+
+            return self._exec_query(sql).lastrowid
+        except:
+            raise InsertNewInstrumentException()

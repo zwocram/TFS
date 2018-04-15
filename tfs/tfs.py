@@ -73,17 +73,6 @@ if __name__ == '__main__':
     tfs_strat = TFS()
     driver = Driver()
 
-    account_info = driver.get_account_data(app)
-    buying_power = account_info[0]
-    account_size = account_info[1]
-    hist_data = []
-    for instr in config.items('forex'):
-        forex_data = driver.get_historical_data(app,
-                                                instr,
-                                                "1 D",
-                                                sleep_time=4)
-        hist_data.append(forex_data)
-
     current_time = app.get_time()
 
     minute_interval = 5
@@ -103,30 +92,26 @@ if __name__ == '__main__':
         curr_time = datetime.datetime.now().time()
         date_today_iso = datetime.datetime.now().date().isoformat()
 
-        """
-        # BELOW IS TEST CODE
-        pdb.set_trace()
-        test_unit = Unit(account_size=10100, atr=.86,
-                         account_risk=0.02,
-                         unit_stop=2,
-                         first_unit_stop=1,
-                         nr_equities=6,
-                         nr_units=4,
-                         ticker='TBT', price=39,
-                         pos_type="long", first_unit=False)
-        max_unit_id = 1
-        pos_id = 2
-        pos_type = "long"
-        new_unit = db.create_unit(test_unit, max_unit_id + 1,
-                                  pos_id, pos_type)
-        position_info = db.get_position_size("TBT")
-        updated_pos = db.update_position(position_info=position_info)
-        """
-
         if (curr_time > EOD_TIME and not eod_job_started) or test_mode:
             print("Starting end of day process at {0}."
                   "".format(datetime.datetime.now().time()))
             eod_job_started = True
+
+            # retrieve account data
+            account_info = driver.get_account_data(app)
+            if account_info is not None:
+                buying_power = account_info[0]
+                account_size = account_info[1]
+
+            # retrieve current exchange rate data
+            hist_data = []
+            for instr in config.items('forex'):
+                forex_data = driver.get_historical_data(app,
+                                                        instr,
+                                                        "1 D",
+                                                        sleep_time=4)
+                hist_data.append(forex_data)
+
             eod_data = tfs_strat.eod_data(ib=app,
                                           portfolio_list=config.items('portfolio'),
                                           tfs_settings=config['tfs'],

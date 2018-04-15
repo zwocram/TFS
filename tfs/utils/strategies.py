@@ -8,6 +8,7 @@ import pandas as pd
 import pdb
 
 from utils.driver import Driver
+from db.database import Database
 from ibapi.contract import Contract
 
 
@@ -90,12 +91,16 @@ class TFS(Strategy):
         :param ib
 
         """
+        db = Database()
+
         app = ib
         tfs_settings = self.driver.get_tfs_settings(tfs_settings)
 
         eod_df = pd.DataFrame()
 
         for p in portfolio_list:
+            if not db.exists_instrument(p):
+                result = db.insert_new_instrument(p)
             historic_data = self.driver.get_historical_data(ib, p)
 
             if historic_data is not None:

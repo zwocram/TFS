@@ -52,9 +52,15 @@ class Unit(object):
 
         return pos_size
 
-    def calc_position_size_risk_perc(self, first_unit=False):
+    def calc_position_size_risk_perc(self, first_unit=False,
+                                     long_short="long"):
         """Calculate position size based on risk percentage.
         """
+
+        pos_sign_corr = 1
+        if long_short == "short":
+            pos_sign_corr = -1
+
         if first_unit:
             stop = self.first_unit_stop
         else:
@@ -63,7 +69,7 @@ class Unit(object):
         pos_size = math.floor((self.account_size * float(self.account_risk)) /
                               (stop * self.atr * self.point_value))
 
-        return pos_size
+        return pos_sign_corr * pos_size
 
     def _calc_stop_level(self, atr, entry_price, position_type,
                          first_unit=False):

@@ -136,6 +136,7 @@ class Database(object):
         """
 
         price_target = 0
+
         if position_type == "long":
             price_target = unit.price + unit.atr
         elif position_type == "short":
@@ -153,7 +154,8 @@ class Database(object):
             """.format(unit_id, position_id, unit.price,
                        unit.atr, price_target,
                        unit.calc_position_size_risk_perc(
-                           first_unit=first_unit),
+                           first_unit=first_unit,
+                           long_short=position_type),
                        unit.stop_level)
 
         return self._exec_query(sql).lastrowid
@@ -234,7 +236,7 @@ class Database(object):
         exists = True
 
         try:
-            ticker = instrument[1].split(',')[4].lstrip()
+            ticker = instrument[0].upper()
             instrument_category = instrument[1].split(',')[5].lstrip()
 
             sql = """
@@ -265,7 +267,7 @@ class Database(object):
         """
 
         try:
-            ticker = instrument[1].split(',')[4].lstrip()
+            ticker = instrument[0].upper()
             instrument_description = instrument[1].split(',')[0].lstrip()
             instrument_category = instrument[1].split(',')[5].lstrip()
             category_id = self._get_category_id(instrument_category)

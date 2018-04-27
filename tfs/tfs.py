@@ -93,6 +93,8 @@ if __name__ == '__main__':
         date_today_iso = datetime.datetime.now().date().isoformat()
 
         if (curr_time > EOD_TIME and not eod_job_started) or test_mode:
+            app.init_error()
+
             print("Starting end of day process at {0}."
                   "".format(datetime.datetime.now().time()))
             eod_job_started = True

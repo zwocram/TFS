@@ -1,5 +1,4 @@
 decorator==4.2.1
-ibapi==9.73.2
 networkx==2.1
 numpy==1.13.3
 pandas==0.22.0

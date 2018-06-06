@@ -36,3 +36,11 @@ class GetCategoryIDException(Exception):
 
 class InsertNewInstrumentException(Exception):
     pass
+
+
+class TransformEODDataException(Exception):
+    pass
+
+
+class InsertNewUnitException(Exception):
+    pass

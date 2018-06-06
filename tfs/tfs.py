@@ -114,10 +114,15 @@ if __name__ == '__main__':
                                                         sleep_time=4)
                 hist_data.append(forex_data)
 
-            eod_data = tfs_strat.eod_data(ib=app,
-                                          portfolio_list=config.items('portfolio'),
-                                          tfs_settings=config['tfs'],
-                                          account_size=account_size)
+            eod_data = tfs_strat.eod_data(
+                ib=app,
+                portfolio_list=config.items('portfolio'),
+                tfs_settings=config['tfs'],
+                account_size=account_size)
+            eod_data = driver.add_columns(
+                eod_data,
+                ['stop_price', 'next_price_target']
+            )
             print(eod_data)
 
             # store account numbers in database
@@ -149,100 +154,15 @@ if __name__ == '__main__':
 
             print("\n=============================\n")
             for index, row in eod_data.iterrows():
-                close_price = row['close']
-                lt_day_high = row['55DayHigh']
-                lt_day_low = row['55DayLow']
-                st_day_high = row['20DayHigh']
-                st_day_low = row['20DayLow']
-                ticker = row['ticker']
-                instrument_id = db.get_instrument_id(ticker).instr_id[0]
-                atr = row['atr']
-                position_info = db.get_position_size(ticker)
-
-                if position_info.shape[0] == 0:
-                    create_new_unit = False
-                    if close_price > lt_day_high:
-                        print('ready to enter 1st long position '
-                              'for {0}'.format(ticker))
-                        pos_type = "long"
-                        create_new_unit = True
-                    elif close_price < lt_day_low:
-                        print('ready to enter 1st short position '
-                              'for {0}'.format(ticker))
-                        pos_type = "short"
-                        create_new_unit = True
-                    else:
-                        print('not ready to enter new position '
-                              'for {0}'.format(ticker))
-
-                    if create_new_unit:
-                        new_position = db.create_position(instrument_id,
-                                                          date_today_iso)
-                        unit = Unit(account_size=account_size, atr=atr,
-                                    account_risk=account_risk,
-                                    unit_stop=unit_stop,
-                                    first_unit_stop=first_unit_stop,
-                                    nr_equities=nr_equities, nr_units=nr_units,
-                                    ticker=ticker, price=close_price,
-                                    pos_type=pos_type, first_unit=True)
-                        new_unit = db.create_unit(unit, 1, new_position,
-                                                  pos_type)
-                        position_info = db.get_position_size(ticker)
-                        updated_pos = db.update_position(
-                            position_info=position_info)
-
-                elif position_info.shape[0] > 0:
-                    pos_id = position_info.pos_id.min()
-                    pos_size = position_info.pos_size.min()
-                    risk_exposure = position_info.risk_exposure.min()
-                    max_unit_id = position_info.unit_id.max()
-                    price_target = position_info.next_price_target.max()
-                    stop_price = position_info.stop_price.max()
-                    if pos_size < 0:
-                        pos_type = "short"
-                    elif pos_size > 0:
-                        pos_type = "long"
-
-                    # check if we have to add units or move up stops
-                    if ((close_price > price_target and pos_type == "long") or
-                            (close_price < price_target
-                             and pos_type == "short")):
-                        if max_unit_id < max_units:
-                            print('add new unit for {0}'.format(ticker))
-                            unit = Unit(account_size=account_size, atr=atr,
-                                        account_risk=account_risk,
-                                        unit_stop=unit_stop,
-                                        first_unit_stop=first_unit_stop,
-                                        nr_equities=nr_equities,
-                                        nr_units=nr_units,
-                                        ticker=ticker, price=close_price,
-                                        pos_type=pos_type, first_unit=True)
-                            new_unit = db.create_unit(unit, max_unit_id + 1,
-                                                      pos_id, pos_type)
-                            position_info = db.get_position_size(ticker)
-                            updated_pos = db.update_position(
-                                position_info=position_info)
-                            # update position info
-                        elif max_unit_id == max_units:
-                            if risk_exposure > 0:
-                                print("move up stop for {0} and "
-                                      "set new stop level.".format(ticker))
-                                # calculate new stop, move it up only 1 ATR
-                                updated_pos = db.update_position(
-                                    position_info=position_info,
-                                    break_even=True)
-
-                    # check if 20 day high/low crossed the stop
-
-                    print('positing size {0}: {1}'.format(ticker, pos_size))
-                # 1) get target price of last unit ==> target_price
-                # if close_price > (or <) target_price:
-
-            """ONLY EXECUTE BELOW CODE IF TESTING
-            temp_time = datetime.datetime.now().time()
-            EOD_TIME = datetime.time(temp_time.hour, temp_time.minute + 1)
-            print(EOD_TIME)
-            """
+                # https://stackoverflow.com/questions/25478528/updating-value-in-iterrow-for-pandas
+                recommendations, updated_row = \
+                    driver.spot_trading_opportunities(
+                        row,
+                        config['tfs'],
+                        account_size)
+                eod_data.loc[index, 'stop_price'] = updated_row['stop_price']
+                eod_data.loc[index, 'next_price_target'] = \
+                    updated_row['next_price_target']
 
             # n_pos_instrument = db.get_position_size(ticker)
         elif curr_time < EOD_TIME:

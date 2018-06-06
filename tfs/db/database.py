@@ -34,7 +34,7 @@ class Database(object):
             crs = self._db_cursor.execute(query)
         except sqlite3.IntegrityError:
             print("Can't execute query; record already exists: \n", query)
-        except StandardError as e:
+        except Exception as e:
             print('Unexpected error: \n', e)
         finally:
             self._db_connection.commit()
@@ -255,8 +255,8 @@ class Database(object):
             if df.size == 0:
                 exists = False
             return exists
-        except:
-            raise CheckInstrumentExistenceException()
+        except Exception as e:
+            raise CheckInstrumentExistenceException(e)
 
     def insert_new_instrument(self, instrument):
         """Checks if instrument exists in databaseself.
@@ -279,5 +279,5 @@ class Database(object):
                 """.format(ticker, instrument_description, category_id)
 
             return self._exec_query(sql).lastrowid
-        except:
-            raise InsertNewInstrumentException()
+        except Exception as e:
+            raise InsertNewInstrumentException(e)

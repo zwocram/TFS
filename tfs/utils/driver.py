@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 
 from utils.unit import Unit
+from utils.charts import BulletGraph, BulletGraphTest
 
 from db.database import Database
 
@@ -51,6 +52,18 @@ class Driver(object):
             account_size)
 
         return new_positions, instrument_eod_data
+
+    def draw_bulletgraph(self, instr_data):
+        bg_test = BulletGraphTest()
+
+        chart2 = bg_test.draw_graph(
+            instr_data,
+            size=(8, 5),
+            axis_label="EOD", label_color="black",
+            bar_color="#252525", target_color='#f7f7f7',
+            title="My title")
+
+        return chart2
 
     def add_columns(self, df, column_names=None):
         """Add columns to a dataframe

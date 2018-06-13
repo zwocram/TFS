@@ -12,6 +12,10 @@ Installion ibapi on linux
 (6) cp -Rp ~/IBJts/source/pythonclient/ibapi [working_directory=TFS/tfs]
 (7) create file logs/log.log in working directory (TFS/tfs)
 
+MAC OS instructions to use the seaborn/matplotlib module
+========================================================
+https://stackoverflow.com/questions/21784641/installation-issue-with-matplotlib-python
+
 Create requirements file
 ========================
 pip freeze > requirements.txt

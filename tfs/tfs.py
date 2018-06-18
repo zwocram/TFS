@@ -124,6 +124,7 @@ if __name__ == '__main__':
                 ['stop_price', 'next_price_target']
             )
             print(eod_data)
+            chart = driver.draw_bulletgraph(eod_data)
 
             # store account numbers in database
             date = eod_data.iloc[0, eod_data.columns.get_loc('date')]

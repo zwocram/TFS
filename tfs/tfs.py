@@ -64,7 +64,7 @@ if __name__ == '__main__':
     test_mode = options.test
 
     try:
-        app = ib.IB("127.0.0.1", 4011, 10)
+        app = ib.IB("127.0.0.1", 4011, 5192)  # use master id
     except AttributeError as exp:
         print("Could not connect to the TWS API application.")
         sys.exit()
@@ -108,10 +108,11 @@ if __name__ == '__main__':
             # retrieve current exchange rate data
             hist_data = []
             for instr in config.items('forex'):
-                forex_data = driver.get_historical_data(app,
-                                                        instr,
-                                                        "1 D",
-                                                        sleep_time=4)
+                forex_data = driver.get_historical_data(
+                    app,
+                    instr,
+                    "1 D",
+                    sleep_time=4)
                 hist_data.append(forex_data)
 
             eod_data = tfs_strat.eod_data(
@@ -119,12 +120,17 @@ if __name__ == '__main__':
                 portfolio_list=config.items('portfolio'),
                 tfs_settings=config['tfs'],
                 account_size=account_size)
-            eod_data = driver.add_columns(
-                eod_data,
-                ['stop_price', 'next_price_target']
-            )
+
+            # add stop orders to eod data
+            new_dataset = driver.add_stop_orders(eod_data, app)
+            eod_data = new_dataset[0]
             print(eod_data)
-            chart = driver.draw_bulletgraph(eod_data)
+            driver.update_stop_orders(new_dataset)
+
+            try:
+                chart = driver.draw_bulletgraph(eod_data)
+            except Exception as e:
+                logging.error("error generating bullet graph: ", e)
 
             # store account numbers in database
             date = eod_data.iloc[0, eod_data.columns.get_loc('date')]

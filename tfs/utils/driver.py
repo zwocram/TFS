@@ -15,7 +15,9 @@ from ibapi.contract import Contract
 
 from ib.ibexceptions import GetAccountDataException, \
     TransformEODDataException, \
-    InsertNewUnitException
+    InsertNewUnitException, \
+    UpdateStopOrderException, \
+    AddStopOrdersException
 
 
 class Driver(object):
@@ -109,11 +111,12 @@ class Driver(object):
 
         f_metadata = self._get_instrument_metadata(instrument)
 
-        contract = self._get_ib_contract(ib,
-                                         f_metadata["sec_type"],
-                                         f_metadata["ticker"],
-                                         f_metadata["exchange"],
-                                         f_metadata["currency"])
+        contract = self._get_ib_contract(
+            ib,
+            f_metadata["sec_type"],
+            f_metadata["ticker"],
+            f_metadata["exchange"],
+            f_metadata["currency"])
 
         historic_data = ib.get_IB_historical_data(contract,
                                                   duration=duration)
@@ -124,6 +127,120 @@ class Driver(object):
         ib.init_error()
 
         return historic_data
+
+    def _get_stop_orders(self, open_orders):
+        """Get stop orders from open order information obect.
+
+        :param open_orders: set of open orders
+
+        :return: dataframe with stop orders
+        """
+
+        data_dict = {}
+        data_dict['stop_price'] = []
+        data_dict['quantity'] = []
+        data_dict['close_action'] = []
+        data_dict['order_id'] = []
+        df_index = []
+
+        for order_id in open_orders.keys():
+            order = open_orders[order_id].order
+            if order.orderType == "STP":
+                contract = open_orders[order_id].contract
+                data_dict['stop_price'].append(order.auxPrice)
+                data_dict['quantity'].append(int(order.totalQuantity))
+                data_dict['close_action'].append(order.action)
+                data_dict['order_id'].append(order_id)
+                if contract.secType == "CASH":
+                    df_index.append(contract.symbol + contract.currency)
+                else:
+                    df_index.append(contract.symbol)
+
+            stop_orders = pd.DataFrame(data_dict, index=df_index)
+
+        return stop_orders
+
+    def _get_orders(self, open_orders, order_type=None):
+        """Retrieves specific order types from the open orders information
+        object.
+
+        :param open_orders: set of open orders to choose from.
+        :param order_type: specific order type to look for (None=every type)
+
+        :return: dataframe of orders
+        """
+
+        """
+        print(tempOrderId, order.orderType, order.action, contract.symbol,
+              "(" + contract.secType + ")",
+              order.totalQuantity, "@", order.auxPrice, order.tif)
+        """
+        stop_orders = None
+        if order_type == "STP":
+            stop_orders = self._get_stop_orders(open_orders)
+
+        return stop_orders
+
+    def add_stop_orders(self, add_to_df, ib):
+        """Retrieves current stop orders and adds them
+        to a specified datasetself.
+
+        :param add_to_df: dataset to which orders have to  added
+        :param to_add: data to add
+        :param ib: the ib api
+
+        :return: dataframe and contracts
+        """
+
+        try:
+            open_orders = ib.get_open_orders()
+            stop_orders = self._get_orders(
+                open_orders, order_type="STP")
+        except Exception as e:
+            raise AddStopOrdersException(e)
+
+        new_eod_data = add_to_df.join(stop_orders, how='left')
+
+        return new_eod_data, open_orders
+
+    def update_stop_orders(self, dataset):
+        """Evaluates a dataframe to check if stop orders
+        have to be updated or not.
+
+        :param dataset: 2D tuple,
+            (0) dataframe with eod_data
+            (1) dictionaary with contracts, dict key = order id
+
+        :return: ???
+        """
+
+        instruments = dataset[0]
+        contracts = dataset[1]
+        try:
+            open_positions = instruments.loc[instruments['stop_price'] > 0]
+            for index, row in open_positions.iterrows():
+                if row['close_action'] == "BUY":  # we're short
+                    if row['20DayHigh'] < row['stop_price']:
+                        # update/modify stop order
+                        print("update stop order:\n",
+                              "\tSTP {0} {1} {2}@{3}".format(
+                                  row['close_action'],
+                                  row['ticker'],
+                                  int(row['quantity']),
+                                  row['stop_price']))
+                elif row['close_action'] == "SELL":
+                    if row['20DayLow'] > row['stop_price']:
+                        # update/modify stop order
+                        print("update stop order:\n",
+                              "\tSTP {0} {1} {2}@{3}".format(
+                                  row['close_action'],
+                                  row['ticker'],
+                                  int(row['quantity']),
+                                  row['stop_price']))
+        except Exception as e:
+            raise UpdateStopOrderException(e)
+
+        # eod_data.loc[eod_data['close'] > eod_data['55DayHigh']]
 
     def _get_ib_contract(self, ib, security_type, symbol, exchange_name,
                          currency):
@@ -159,10 +276,8 @@ class Driver(object):
         instrument_props["identifier"] = instrument[0].upper()
         instrument_props["exchange"] = instrument[1].split(',')[1].lstrip()
         instrument_props["sec_type"] = instrument[1].split(',')[2].lstrip()
-        instrument_props["currency"] = \
-            instrument[1].split(', ')[3].lstrip().upper()
-        instrument_props["ticker"] = \
-            instrument[1].split(',')[4].lstrip().upper()
+        instrument_props["currency"] = instrument[1].split(', ')[3].lstrip().upper()
+        instrument_props["ticker"] = instrument[1].split(',')[4].lstrip().upper()
 
         return instrument_props
 
@@ -178,15 +293,11 @@ class Driver(object):
         tfs_settings_dict = {}
         tfs_settings_dict['atr_horizon'] = int(tfs_settings['atr_horizon'])
 
-        tfs_settings_dict['entry_breakout_periods'] = \
-            int(tfs_settings['entry_breakout_periods'])
-        tfs_settings_dict['exit_breakout_periods'] = \
-            int(tfs_settings['exit_breakout_periods'])
-        tfs_settings_dict['account_risk'] = \
-            decimal.Decimal(tfs_settings['account_risk'])
+        tfs_settings_dict['entry_breakout_periods'] = int(tfs_settings['entry_breakout_periods'])
+        tfs_settings_dict['exit_breakout_periods'] = int(tfs_settings['exit_breakout_periods'])
+        tfs_settings_dict['account_risk'] = decimal.Decimal(tfs_settings['account_risk'])
         tfs_settings_dict['unit_stop'] = int(tfs_settings['unit_stop'])
-        tfs_settings_dict['first_unit_stop'] = \
-            int(tfs_settings['first_unit_stop'])
+        tfs_settings_dict['first_unit_stop'] = int(tfs_settings['first_unit_stop'])
         tfs_settings_dict['nr_equities'] = int(tfs_settings['nr_equities'])
         tfs_settings_dict['nr_units'] = int(tfs_settings['nr_units'])
         tfs_settings_dict['max_units'] = int(tfs_settings['max_units'])
@@ -324,16 +435,12 @@ class Driver(object):
 
         if pos_size < 0:
             pos_type = "short"
-            price_target = \
-                instrument_data['position_info'].next_price_target.min()
-            stop_price = \
-                instrument_data['position_info'].stop_price.min()
+            price_target = instrument_data['position_info'].next_price_target.min()
+            stop_price = instrument_data['position_info'].stop_price.min()
         elif pos_size > 0:
             pos_type = "long"
-            price_target = \
-                instrument_data['position_info'].next_price_target.max()
-            stop_price = \
-                instrument_data['position_info'].stop_price.min()
+            price_target = instrument_data['position_info'].next_price_target.max()
+            stop_price = instrument_data['position_info'].stop_price.min()
 
         # check if we have to add units or move up stops
         if ((instrument_data['close_price'] > price_target
@@ -433,15 +540,11 @@ class Driver(object):
 
         pos_size = position_info['position_info'].pos_size.min()
         if pos_size < 0:
-            price_target = \
-                position_info['position_info'].next_price_target.min()
-            stop_price = \
-                position_info['position_info'].stop_price.min()
+            price_target = position_info['position_info'].next_price_target.min()
+            stop_price = position_info['position_info'].stop_price.min()
         elif pos_size > 0:
-            price_target = \
-                position_info['position_info'].next_price_target.max()
-            stop_price = \
-                position_info['position_info'].stop_price.max()
+            price_target = position_info['position_info'].next_price_target.max()
+            stop_price = position_info['position_info'].stop_price.max()
 
         if not pd.isnull(pos_size):
             return stop_price, price_target

@@ -44,3 +44,11 @@ class TransformEODDataException(Exception):
 
 class InsertNewUnitException(Exception):
     pass
+
+
+class AddStopOrdersException(Exception):
+    pass
+
+
+class UpdateStopOrderException(Exception):
+    pass

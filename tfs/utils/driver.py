@@ -227,7 +227,7 @@ class Driver(object):
                                   row['close_action'],
                                   row['ticker'],
                                   int(row['quantity']),
-                                  row['stop_price']))
+                                  row['20DayHigh']))
                 elif row['close_action'] == "SELL":
                     if row['20DayLow'] > row['stop_price']:
                         # update/modify stop order
@@ -236,7 +236,7 @@ class Driver(object):
                                   row['close_action'],
                                   row['ticker'],
                                   int(row['quantity']),
-                                  row['stop_price']))
+                                  row['20DayLow']))
         except Exception as e:
             raise UpdateStopOrderException(e)
 

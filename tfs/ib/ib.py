@@ -410,10 +410,14 @@ class IBClient(EClient):
             logging.error(exp)
             return
 
-        new_contract_details = new_contract_details[0]
+        # dealing with different tws api versions
+        try:
+            resolved_ibcontract = new_contract_details[0].contract
+        except AttributeError as e:
+            new_contract_details = new_contract_details[0]
+            resolved_ibcontract = new_contract_details.summary
 
-        resolved_ibcontract = new_contract_details.summary
-        logging.info("resolved contract")
+        pdb.set_trace()
         return resolved_ibcontract
 
     def start_getting_IB_market_data(self, resolved_ibcontract,

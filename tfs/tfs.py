@@ -17,6 +17,8 @@ from db.database import Database
 from ib import ib
 from ibapi.contract import Contract
 
+from config import tfslog
+
 EOD_TIME = datetime.time(22, 0)
 
 if __name__ == '__main__':
@@ -24,10 +26,10 @@ if __name__ == '__main__':
     # ipaddress is 127.0.0.1 if one same machine, clientid is arbitrary
 
     # set up logging
-    logging.basicConfig(format='%(levelname)s %(asctime)s: %(message)s',
-                        filename='logs/log.log',
-                        filemode='w', level=logging.INFO)
-    logging.warning('loggin created')
+    # setup log
+    tfslog.setup_logging()
+    logger = logging.getLogger()
+    logger.info("create logger object")
 
     # read config file
     config = configparser.ConfigParser()

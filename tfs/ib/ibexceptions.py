@@ -52,3 +52,11 @@ class AddStopOrdersException(Exception):
 
 class UpdateStopOrderException(Exception):
     pass
+
+
+class AddContractToQueueException(Exception):
+    pass
+
+
+class GetDataFromMarketDataException(Exception):
+    pass

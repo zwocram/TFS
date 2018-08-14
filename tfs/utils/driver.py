@@ -17,7 +17,8 @@ from ib.ibexceptions import GetAccountDataException, \
     TransformEODDataException, \
     InsertNewUnitException, \
     UpdateStopOrderException, \
-    AddStopOrdersException
+    AddStopOrdersException, \
+    GetDataFromMarketDataException
 
 
 class Driver(object):
@@ -550,3 +551,25 @@ class Driver(object):
             return stop_price, price_target
         else:
             return np.nan, np.nan
+
+    def get_specific_data_from_mkt_data(self, market_data, atts=None):
+        """Retrieves specific attributes from the market data dataframe
+
+        :param market_data: dataframe with market data
+        :param atts: list of attributes to retrieve
+
+        :return: tuple with required attributes
+        """
+
+        if atts is None:
+            return
+        else:
+            try:
+                att_values = []
+                for att in atts:
+                    att_value = market_data[att].dropna()[-1:].min()
+                    # float("{0:.4f}".format(today_low))
+                    att_values.append(float("{0:.4f}".format(att_value)))
+            except Exception as e:
+                raise GetDataFromMarketDataException(e)
+            return att_values

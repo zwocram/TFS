@@ -1,5 +1,7 @@
 import sqlite3
+import pickle
 import pandas as pd
+import datetime
 
 from ib.ibexceptions import *
 
@@ -257,6 +259,52 @@ class Database(object):
             return exists
         except Exception as e:
             raise CheckInstrumentExistenceException(e)
+
+    def get_pending_orders(self):
+        """Selects pending orders from the database.
+
+        :return: set with pending orders
+        """
+
+        sql = """
+            select *
+            from OrderQueue
+            where status = 'pending'
+            """
+
+        return self._exec_query(sql)
+
+    def add_order_to_queue(self, ibcontract, quantity, action, order_type):
+        """Add contract data to order queue tabel
+        to prepare for the next trading session.
+
+        :param contract: ib contract
+        :param quantity: how much to buy/sell
+        :param action: do we buy or sell?
+
+        :return: inserted item id in OrdersQueue table
+        """
+
+        ticker = ibcontract.symbol
+        sectype = ibcontract.secType
+        exchange = ibcontract.exchange
+        currency = ibcontract.currency
+
+        status = "pending"
+        dat_entered = datetime.datetime.now().isoformat()
+
+        sql = """
+            insert into OrderQueue(ticker, contract_sectype,
+                contract_exchange, contract_currency, order_type,
+                quantity, action, status, dat_entered, dat_updated)
+            values('{0}', '{1}', '{2}', '{3}', '{4}', {5}, '{6}', '{7}',
+                '{8}', null)
+            """.format(ticker, sectype, exchange, currency, order_type,
+                       quantity, action, status, dat_entered)
+        try:
+            return self._exec_query(sql).lastrowid
+        except Exception as e:
+            raise AddContractToQueueException(e)
 
     def insert_new_instrument(self, instrument):
         """Checks if instrument exists in databaseself.

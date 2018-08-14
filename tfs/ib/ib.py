@@ -47,6 +47,8 @@ FINISHED = object()
 STARTED = object()
 TIME_OUT = object()
 
+FILL_CODE = -1
+
 ACCOUNT_UPDATE_FLAG = "update"
 ACCOUNT_VALUE_FLAG = "value"
 ACCOUNT_TIME_FLAG = "time"
@@ -393,8 +395,12 @@ class IBWrapper(EWrapper):
     _my_accounts = {}
 
     def __init__(self):
+        self.logger = logging.getLogger(__name__ + ".wrapper")
         self._my_contract_details = {}
         self._my_market_data_dict = {}
+        self._my_open_orders = queue.Queue()
+        self._my_executions_stream = queue.Queue()
+        self._my_commission_stream = queue.Queue()
 
     def add_to_queue_class(ibwrapper_function):
         def wrap_the_wrapper(*args, **kwargs):
@@ -432,6 +438,56 @@ class IBWrapper(EWrapper):
             errormsg = "IB error id %d errorcode %d string %s" % (id, errorCode, errorString)
             self._my_errors.put(errormsg)
 
+    """ Executions and commissions
+    Requested executions get dropped into single queue:
+        self._my_requested_execution[reqId]
+
+    Those that arrive as orders are completed without a relevant
+    reqId go into self._my_executions_stream.
+
+    All commissions go into self._my_commission_stream
+    (could be requested or not).
+
+    The *_stream queues are permanent, and init when the
+    TestWrapper instance is created
+    """
+
+    def execDetails(self, reqId, contract, execution):
+        """
+        This is called if
+        a) we have submitted an order and a fill has come back (in which
+        case reqId will be FILL_CODE)
+        b) We have asked for recent fills to be given to us (reqId will be
+        See API docs for more details
+        """
+        execdata = execInformation(
+            execution.execId, contract=contract,
+            ClientId=execution.clientId, OrderId=execution.orderId,
+            time=execution.time, AvgPrice=execution.avgPrice,
+            AcctNumber=execution.acctNumber, Shares=execution.shares,
+            Price=execution.price)
+
+        self.logger.info("in execData")
+
+        # there are some other things in execution you could add
+        # make sure you add them to the .attributes() field of the
+        # execInformation class
+
+        reqId = int(reqId)
+
+        # We either put this into a stream if its just happened,
+        # or store it for a specific request
+        if reqId == FILL_CODE:
+            self._my_executions_stream.put(execdata)
+        else:
+            self._my_requested_execution[reqId].put(execdata)
+
+    def execDetailsEnd(self, reqId):
+        """
+        No more orders to look at if execution details requested
+        """
+        self._my_requested_execution[reqId].put(FINISHED)
+
     # orders
     def init_open_orders(self):
         open_orders_queue = self._my_open_orders = queue.Queue()
@@ -442,12 +498,15 @@ class IBWrapper(EWrapper):
                     avgFillPrice, permid, parentId, lastFillPrice,
                     clientId, whyHeld):
 
-        tempOrderId = orderId
-        if orderId == 0:
-            tempOrderId = permid
+        self.logger.info("in order status")
+#        self.logger.info("Order status:", status,
+#                        "filled: ", filled,
+#                        "avgFillPrice: ", avgFillPrice,
+#                        "lastFillPrice: ", lastFillPrice,
+#                        "order id: ", orderId)
 
         order_details = orderInformation(
-            tempOrderId, status=status, filled=filled,
+            orderId, status=status, filled=filled,
             avgFillPrice=avgFillPrice, permid=permid,
             parentId=parentId, lastFillPrice=lastFillPrice,
             clientId=clientId, whyHeld=whyHeld)
@@ -460,15 +519,13 @@ class IBWrapper(EWrapper):
         overriden method
         """
 
-        tempOrderId = orderId
-        if orderId == 0:
-            tempOrderId = order.permId
+        self.logger.info("in open order")
+#        self.logger.info(
+#            orderId, order.orderType, order.action,
+#            contract.symbol, "(" + contract.secType + ")",
+#            order.totalQuantity, "@", order.auxPrice, order.tif)
 
-        print(tempOrderId, order.orderType, order.action, contract.symbol,
-              "(" + contract.secType + ")",
-              order.totalQuantity, "@", order.auxPrice, order.tif)
-
-        order_details = orderInformation(tempOrderId, contract=contract,
+        order_details = orderInformation(orderId, contract=contract,
                                          order=order, orderstate=orderstate)
         self._my_open_orders.put(order_details)
 
@@ -479,6 +536,26 @@ class IBWrapper(EWrapper):
         """
 
         self._my_open_orders.put(FINISHED)
+
+    # order ids
+    def init_nextvalidid(self):
+
+        orderid_queue = self._my_orderid_data = queue.Queue()
+
+        return orderid_queue
+
+    def nextValidId(self, orderId):
+        """
+        Give the next valid order id
+        Note this doesn't 'burn' the ID; if you call again without executing the next ID will be the same
+        If you're executing through multiple clients you are probably better off having an explicit counter
+        """
+        if getattr(self, '_my_orderid_data', None) is None:
+            # getting an ID which we haven't asked for
+            # this happens, IB server just sends this along occassionally
+            self.init_nextvalidid()
+
+        self._my_orderid_data.put(orderId)
 
     # get contract details code
     def init_contractdetails(self, reqId):
@@ -596,6 +673,7 @@ class IBClient(EClient):
 
     def __init__(self, wrapper):
         # Set up with a wrapper inside
+        self.logger = logging.getLogger(__name__ + ".client")
         EClient.__init__(self, wrapper)
         self._market_data_q_dict = {}
 
@@ -613,6 +691,30 @@ class IBClient(EClient):
             current_time = self._msg_queue.get(timeout=MAX_WAIT_SECONDS)
         except queue.Empty:
             print("Exceeded maximum wait for wrapper to respond")
+
+    def get_next_brokerorderid(self):
+        """
+        Get next broker order id
+        :return: broker order id, int; or TIME_OUT if unavailable
+        """
+
+        # Make a place to store the data we're going to return
+        orderid_q = self.init_nextvalidid()
+
+        self.reqIds(-1)  # -1 is irrelevant apparently (see IB API docs)
+
+        # Run until we get a valid contract(s) or get bored waiting
+        MAX_WAIT_SECONDS = 10
+        try:
+            brokerorderid = orderid_q.get(timeout=MAX_WAIT_SECONDS)
+        except queue.Empty:
+            print("Wrapper timeout waiting for broker orderid")
+            brokerorderid = TIME_OUT
+
+        while self.wrapper.is_error():
+            print(self.get_error(timeout=MAX_WAIT_SECONDS))
+
+        return brokerorderid
 
     def get_open_orders(self):
         """
@@ -683,35 +785,43 @@ class IBClient(EClient):
                                                 ibcontract.symbol, "got multiple contracts using first one")
         except (ResolveContractDetailsException, IBTimeoutException,
                 UnresolvedContractException, MultipleContractException) as exp:
-            logging.error(exp)
+            self.logger.warning(exp)
             return
 
-        new_contract_details = new_contract_details[0]
+        # dealing with different tws api versions
+        try:
+            resolved_ibcontract = new_contract_details[0].contract
+        except AttributeError as e:
+            new_contract_details = new_contract_details[0]
+            resolved_ibcontract = new_contract_details.summary
 
-        resolved_ibcontract = new_contract_details.summary
-        logging.info("resolved contract")
         return resolved_ibcontract
 
     def start_getting_IB_market_data(self, resolved_ibcontract,
-                                     tickerid=DEFAULT_MARKET_DATA_ID):
+                                     tickerid=DEFAULT_MARKET_DATA_ID,
+                                     snapshot=False):
         """
         Kick off market data streaming
         :param resolved_ibcontract: a Contract object
         :param tickerid: the identifier for the request
+        :param snapshot: bool
+            True: ask for market data snapshot
+            False:ask for market data stream
         :return: tickerid
         """
 
         self._market_data_q_dict[tickerid] = self.wrapper.init_market_data(tickerid)
-        self.reqMktData(tickerid, resolved_ibcontract, "", False, False, [])
+        self.reqMktData(tickerid, resolved_ibcontract, "", snapshot, False, [])
 
         return tickerid
 
-    def stop_getting_IB_market_data(self, tickerid):
+    def stop_getting_IB_market_data(self, tickerid, timeout=5):
         """
         Stops the stream of market data and returns all the data
         we've had since we last asked for it
 
         :param tickerid: identifier for the request
+        :param timeout: timeout in seconds
         :return: market data
         """
 
@@ -720,7 +830,7 @@ class IBClient(EClient):
 
         # Sometimes a lag whilst this happens, this prevents 'orphan'
         # ticks appearing
-        time.sleep(5)
+        time.sleep(timeout)
 
         market_data = self.get_IB_market_data(tickerid)
 
@@ -800,7 +910,7 @@ class IBClient(EClient):
                                                      finished.")
         except (HistoricalDataRetrieveException,
                 HistoricalDataTimeoutException) as exp:
-            logging.error(exp)
+            self.logger.warning(exp)
             return
 
         self.cancelHistoricalData(tickerid)

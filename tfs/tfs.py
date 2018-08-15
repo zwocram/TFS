@@ -127,7 +127,6 @@ if __name__ == '__main__':
             new_dataset = driver.add_stop_orders(eod_data, app)
             eod_data = new_dataset[0]
             eod_data = driver.add_columns(eod_data, ['next_price_target'])
-            print(eod_data)
             driver.update_stop_orders(new_dataset)
 
             try:

@@ -1,5 +1,7 @@
 import sqlite3
+import pickle
 import pandas as pd
+import datetime
 
 from ib.ibexceptions import *
 
@@ -24,14 +26,14 @@ class Database(object):
         self._db_connection = sqlite3.connect('db/tfs.db')
         self._db_cursor = self._db_connection.cursor()
 
-    def _exec_query(self, query):
+    def _exec_query(self, query, params=None):
         """Executes a query against the database. Any query can be
         executed: select, insert or update statements
         """
         crs = None
 
         try:
-            crs = self._db_cursor.execute(query)
+            crs = self._db_cursor.execute(query, params)
         except sqlite3.IntegrityError:
             print("Can't execute query; record already exists: \n", query)
         except Exception as e:
@@ -91,6 +93,29 @@ class Database(object):
         sql = "select * from Account"
 
         return self._exec_query(sql)
+
+    def get_settings_from_db(self, params=None):
+        """
+        Select all or specific settings from the
+        Settings table.
+
+        :param params: parameters to retrieve. If None, get all
+
+        :return: dictionary with params and values
+        """
+
+        sql = """
+            select *
+            from Settings
+            where param in (%s)
+            """ % ','.join('?' * len(params))
+
+        settings_dict = {}
+        settings = self._exec_query(sql, params).fetchall()
+        for setting in settings:
+            settings_dict[setting[0]] = setting[1]
+
+        return settings_dict
 
     def get_position_size(self, ticker):
         """
@@ -257,6 +282,52 @@ class Database(object):
             return exists
         except Exception as e:
             raise CheckInstrumentExistenceException(e)
+
+    def get_pending_orders(self):
+        """Selects pending orders from the database.
+
+        :return: set with pending orders
+        """
+
+        sql = """
+            select *
+            from OrderQueue
+            where status = 'pending'
+            """
+
+        return self._exec_query(sql)
+
+    def add_order_to_queue(self, ibcontract, quantity, action, order_type):
+        """Add contract data to order queue tabel
+        to prepare for the next trading session.
+
+        :param contract: ib contract
+        :param quantity: how much to buy/sell
+        :param action: do we buy or sell?
+
+        :return: inserted item id in OrdersQueue table
+        """
+
+        ticker = ibcontract.symbol
+        sectype = ibcontract.secType
+        exchange = ibcontract.exchange
+        currency = ibcontract.currency
+
+        status = "pending"
+        dat_entered = datetime.datetime.now().isoformat()
+
+        sql = """
+            insert into OrderQueue(ticker, contract_sectype,
+                contract_exchange, contract_currency, order_type,
+                quantity, action, status, dat_entered, dat_updated)
+            values('{0}', '{1}', '{2}', '{3}', '{4}', {5}, '{6}', '{7}',
+                '{8}', null)
+            """.format(ticker, sectype, exchange, currency, order_type,
+                       quantity, action, status, dat_entered)
+        try:
+            return self._exec_query(sql).lastrowid
+        except Exception as e:
+            raise AddContractToQueueException(e)
 
     def insert_new_instrument(self, instrument):
         """Checks if instrument exists in databaseself.

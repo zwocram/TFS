@@ -17,6 +17,8 @@ from db.database import Database
 from ib import ib
 from ibapi.contract import Contract
 
+from config import tfslog
+
 EOD_TIME = datetime.time(22, 0)
 
 if __name__ == '__main__':
@@ -24,10 +26,10 @@ if __name__ == '__main__':
     # ipaddress is 127.0.0.1 if one same machine, clientid is arbitrary
 
     # set up logging
-    logging.basicConfig(format='%(levelname)s %(asctime)s: %(message)s',
-                        filename='logs/log.log',
-                        filemode='w', level=logging.INFO)
-    logging.warning('loggin created')
+    # setup log
+    tfslog.setup_logging()
+    logger = logging.getLogger()
+    logger.info("create logger object")
 
     # read config file
     config = configparser.ConfigParser()
@@ -63,15 +65,18 @@ if __name__ == '__main__':
     eod = options.eod
     test_mode = options.test
 
-    try:
-        app = ib.IB("127.0.0.1", 4011, 10)
-    except AttributeError as exp:
-        print("Could not connect to the TWS API application.")
-        sys.exit()
-
     db = Database()
     tfs_strat = TFS()
     driver = Driver()
+
+    settings_from_db = db.get_settings_from_db(
+        ('masterid',))
+
+    try:
+        app = ib.IB("127.0.0.1", 4011, int(settings_from_db['masterid']))
+    except AttributeError as exp:
+        print("Could not connect to the TWS API application.")
+        sys.exit()
 
     current_time = app.get_time()
 
@@ -108,10 +113,11 @@ if __name__ == '__main__':
             # retrieve current exchange rate data
             hist_data = []
             for instr in config.items('forex'):
-                forex_data = driver.get_historical_data(app,
-                                                        instr,
-                                                        "1 D",
-                                                        sleep_time=4)
+                forex_data = driver.get_historical_data(
+                    app,
+                    instr,
+                    "1 D",
+                    sleep_time=4)
                 hist_data.append(forex_data)
 
             eod_data = tfs_strat.eod_data(
@@ -119,11 +125,17 @@ if __name__ == '__main__':
                 portfolio_list=config.items('portfolio'),
                 tfs_settings=config['tfs'],
                 account_size=account_size)
-            eod_data = driver.add_columns(
-                eod_data,
-                ['stop_price', 'next_price_target']
-            )
-            print(eod_data)
+
+            # add stop orders to eod data
+            new_dataset = driver.add_stop_orders(eod_data, app)
+            eod_data = new_dataset[0]
+            eod_data = driver.add_columns(eod_data, ['next_price_target'])
+            driver.update_stop_orders(new_dataset)
+
+            try:
+                chart = driver.draw_bulletgraph(eod_data)
+            except Exception as e:
+                logging.error("error generating bullet graph: ", e)
 
             # store account numbers in database
             date = eod_data.iloc[0, eod_data.columns.get_loc('date')]

@@ -26,6 +26,7 @@ from threading import Thread
 import queue
 import time
 import datetime
+from copy import deepcopy
 import logging
 import pandas as pd
 import numpy as np
@@ -45,6 +46,8 @@ DEFAULT_GET_CONTRACT_ID = 43
 FINISHED = object()
 STARTED = object()
 TIME_OUT = object()
+
+FILL_CODE = -1
 
 ACCOUNT_UPDATE_FLAG = "update"
 ACCOUNT_VALUE_FLAG = "value"
@@ -181,6 +184,210 @@ class IBtick(tick):
             return "ignorable_tick_id"
 
 
+# marker to show a mergable object hasn't got any attributes
+NO_ATTRIBUTES_SET = object()
+
+
+class mergableObject(object):
+    """
+    Generic object to make it easier to munge together
+    incomplete information about orders and executions
+    """
+
+    def __init__(self, id, **kwargs):
+        """
+        :param id: master reference, has to be an immutable type
+        :param kwargs: other attributes which will appear in
+            list returned by attributes() method
+        """
+
+        self.id = id
+        attr_to_use = self.attributes()
+
+        for argname in kwargs:
+            if argname in attr_to_use:
+                setattr(self, argname, kwargs[argname])
+            else:
+                print(
+                    "Ignoring argument passed %s: is this "
+                    "the right kind of object? If so, add to "
+                    ".attributes() method" % argname)
+
+    def attributes(self):
+        # should return a list of str here
+        # eg return ["thingone", "thingtwo"]
+        return NO_ATTRIBUTES_SET
+
+    def _name(self):
+        return "Generic Mergable object - "
+
+    def __repr__(self):
+
+        attr_list = self.attributes()
+        if attr_list is NO_ATTRIBUTES_SET:
+            return self._name()
+
+        return self._name() + " ".join(["%s: %s" % (
+            attrname, str(getattr(self, attrname))) for attrname in attr_list
+            if getattr(self, attrname, None) is not None])
+
+    def merge(self, details_to_merge, overwrite=True):
+        """
+        Merge two things
+        self.id must match
+        :param details_to_merge: thing to merge into current one
+        :param overwrite: if True then overwrite current values,
+            otherwise keep current values
+        :return: merged thing
+        """
+
+        if self.id != details_to_merge.id:
+            raise Exception("Can't merge details with different "
+                            "IDS %d and %d!" %
+                            (self.id, details_to_merge.id))
+
+        arg_list = self.attributes()
+        if arg_list is NO_ATTRIBUTES_SET:
+            # self is a generic, empty, object.
+            # I can just replace it wholesale with the new object
+
+            new_object = details_to_merge
+
+            return new_object
+
+        new_object = deepcopy(self)
+
+        for argname in arg_list:
+            my_arg_value = getattr(self, argname, None)
+            new_arg_value = getattr(details_to_merge, argname, None)
+
+            if new_arg_value is not None:
+                # have something to merge
+                if my_arg_value is not None and not overwrite:
+                    # conflict with current value,
+                    # don't want to overwrite, skip
+                    pass
+                else:
+                    setattr(new_object, argname, new_arg_value)
+
+        return new_object
+
+
+class orderInformation(mergableObject):
+    """
+    Collect information about orders
+    master ID will be the orderID
+    eg you'd do order_details = orderInformation(orderID, contract=....)
+    """
+
+    def _name(self):
+        return "Order - "
+
+    def attributes(self):
+        return ['contract', 'order', 'orderstate', 'status',
+                'filled', 'remaining', 'avgFillPrice', 'permid',
+                'parentId', 'lastFillPrice', 'clientId', 'whyHeld']
+
+
+class execInformation(mergableObject):
+    """
+    Collect information about executions
+    master ID will be the execid
+    eg you'd do exec_info = execInformation(execid, contract= ... )
+    """
+
+    def _name(self):
+        return "Execution - "
+
+    def attributes(self):
+        return ['contract', 'ClientId', 'OrderId', 'time',
+                'AvgPrice', 'Price', 'AcctNumber',
+                'Shares', 'Commission', 'commission_currency', 'realisedpnl']
+
+
+class list_of_mergables(list):
+    """
+    A list of mergable objects, like execution details or order information
+    """
+
+    def merged_dict(self):
+        """
+        Merge and remove duplicates of a stack of mergable objects
+        with unique ID. Essentially creates the union of the objects
+        in the stack
+
+        :return: dict of mergableObjects, keynames .id
+        """
+
+        # We create a new stack of order details which will
+        # contain merged order or execution details
+        new_stack_dict = {}
+
+        for stack_member in self:
+            id = stack_member.id
+            if id == 0:
+                try:
+                    order = getattr(stack_member, 'order')
+                    id = order.permId
+                except AttributeError as e:
+                    id = stack_member.permid
+            stack_member.id = id
+            if id not in new_stack_dict.keys():
+                # not in new stack yet, create a 'blank' object
+                # Note this will have no attributes,
+                # so will be replaced when merged with a proper object
+                new_stack_dict[id] = mergableObject(id)
+
+            existing_stack_member = new_stack_dict[id]
+
+            # add on the new information by merging
+            # if this was an empty 'blank' object it will just
+            # be replaced with stack_member
+            new_stack_dict[id] = existing_stack_member.merge(stack_member)
+
+        return new_stack_dict
+
+    def blended_dict(self, stack_to_merge):
+        """
+        Merges any objects in new_stack with the same ID as
+        those in the original_stack
+
+        :param self: list of mergableObject or inheritors thereof
+        :param stack_to_merge: list of mergableObject or inheritors thereof
+        :return: dict of mergableObjects, keynames .id
+        """
+
+        # We create a new dict stack of order details which
+        # will contain merged details
+
+        new_stack = {}
+
+        # convert the thing we're merging into a dictionary
+        stack_to_merge_dict = stack_to_merge.merged_dict()
+
+        for stack_member in self:
+            id = stack_member.id
+            new_stack[id] = deepcopy(stack_member)
+
+            if id in stack_to_merge_dict.keys():
+                # add on the new information by merging without overwriting
+                new_stack[id] = stack_member.merge(
+                    stack_to_merge_dict[id], overwrite=False)
+
+        return new_stack
+
+
+# Just to make the code more readable
+
+
+class list_of_execInformation(list_of_mergables):
+    pass
+
+
+class list_of_orderInformation(list_of_mergables):
+    pass
+
+
 class IBWrapper(EWrapper):
     """
     The wrapper deals with the action coming back from the IB
@@ -195,8 +402,12 @@ class IBWrapper(EWrapper):
     _my_accounts = {}
 
     def __init__(self):
+        self.logger = logging.getLogger(__name__ + ".wrapper")
         self._my_contract_details = {}
         self._my_market_data_dict = {}
+        self._my_open_orders = queue.Queue()
+        self._my_executions_stream = queue.Queue()
+        self._my_commission_stream = queue.Queue()
 
     def add_to_queue_class(ibwrapper_function):
         def wrap_the_wrapper(*args, **kwargs):
@@ -233,6 +444,127 @@ class IBWrapper(EWrapper):
         if errorCode not in self._accepted_error_codes:
             errormsg = "IB error id %d errorcode %d string %s" % (id, errorCode, errorString)
             self._my_errors.put(errormsg)
+
+    """ Executions and commissions
+    Requested executions get dropped into single queue:
+        self._my_requested_execution[reqId]
+
+    Those that arrive as orders are completed without a relevant
+    reqId go into self._my_executions_stream.
+
+    All commissions go into self._my_commission_stream
+    (could be requested or not).
+
+    The *_stream queues are permanent, and init when the
+    TestWrapper instance is created
+    """
+
+    def execDetails(self, reqId, contract, execution):
+        """
+        This is called if
+        a) we have submitted an order and a fill has come back (in which
+        case reqId will be FILL_CODE)
+        b) We have asked for recent fills to be given to us (reqId will be
+        See API docs for more details
+        """
+        execdata = execInformation(
+            execution.execId, contract=contract,
+            ClientId=execution.clientId, OrderId=execution.orderId,
+            time=execution.time, AvgPrice=execution.avgPrice,
+            AcctNumber=execution.acctNumber, Shares=execution.shares,
+            Price=execution.price)
+
+        self.logger.info("in execData")
+
+        # there are some other things in execution you could add
+        # make sure you add them to the .attributes() field of the
+        # execInformation class
+
+        reqId = int(reqId)
+
+        # We either put this into a stream if its just happened,
+        # or store it for a specific request
+        if reqId == FILL_CODE:
+            self._my_executions_stream.put(execdata)
+        else:
+            self._my_requested_execution[reqId].put(execdata)
+
+    def execDetailsEnd(self, reqId):
+        """
+        No more orders to look at if execution details requested
+        """
+        self._my_requested_execution[reqId].put(FINISHED)
+
+    # orders
+    def init_open_orders(self):
+        open_orders_queue = self._my_open_orders = queue.Queue()
+
+        return open_orders_queue
+
+    def orderStatus(self, orderId, status, filled, remaining,
+                    avgFillPrice, permid, parentId, lastFillPrice,
+                    clientId, whyHeld):
+
+        self.logger.info(
+            "Order status: %s, "
+            "filled: %s, "
+            "avgFillPrice: %s, "
+            "lastFillPrice: %s, "
+            "order id: %s.",
+            status, filled, avgFillPrice, lastFillPrice, orderId)
+
+        order_details = orderInformation(
+            orderId, status=status, filled=filled,
+            avgFillPrice=avgFillPrice, permid=permid,
+            parentId=parentId, lastFillPrice=lastFillPrice,
+            clientId=clientId, whyHeld=whyHeld)
+
+        self._my_open_orders.put(order_details)
+
+    def openOrder(self, orderId, contract, order, orderstate):
+        """
+        Tells us about any orders we are working now
+        overriden method
+        """
+
+        self.logger.info(
+            "Order: %s, %s %s %s (%s) %s@%s %s",
+            orderId, order.orderType, order.action,
+            contract.symbol, contract.secType, order.totalQuantity,
+            order.auxPrice, order.tif
+        )
+
+        order_details = orderInformation(orderId, contract=contract,
+                                         order=order, orderstate=orderstate)
+        self._my_open_orders.put(order_details)
+
+    def openOrderEnd(self):
+        """
+        Finished getting open orders
+        Overriden method
+        """
+
+        self._my_open_orders.put(FINISHED)
+
+    # order ids
+    def init_nextvalidid(self):
+
+        orderid_queue = self._my_orderid_data = queue.Queue()
+
+        return orderid_queue
+
+    def nextValidId(self, orderId):
+        """
+        Give the next valid order id
+        Note this doesn't 'burn' the ID; if you call again without executing the next ID will be the same
+        If you're executing through multiple clients you are probably better off having an explicit counter
+        """
+        if getattr(self, '_my_orderid_data', None) is None:
+            # getting an ID which we haven't asked for
+            # this happens, IB server just sends this along occassionally
+            self.init_nextvalidid()
+
+        self._my_orderid_data.put(orderId)
 
     # get contract details code
     def init_contractdetails(self, reqId):
@@ -350,6 +682,7 @@ class IBClient(EClient):
 
     def __init__(self, wrapper):
         # Set up with a wrapper inside
+        self.logger = logging.getLogger(__name__ + ".client")
         EClient.__init__(self, wrapper)
         self._market_data_q_dict = {}
 
@@ -367,6 +700,60 @@ class IBClient(EClient):
             current_time = self._msg_queue.get(timeout=MAX_WAIT_SECONDS)
         except queue.Empty:
             print("Exceeded maximum wait for wrapper to respond")
+
+    def get_next_brokerorderid(self):
+        """
+        Get next broker order id
+        :return: broker order id, int; or TIME_OUT if unavailable
+        """
+
+        # Make a place to store the data we're going to return
+        orderid_q = self.init_nextvalidid()
+
+        self.reqIds(-1)  # -1 is irrelevant apparently (see IB API docs)
+
+        # Run until we get a valid contract(s) or get bored waiting
+        MAX_WAIT_SECONDS = 10
+        try:
+            brokerorderid = orderid_q.get(timeout=MAX_WAIT_SECONDS)
+        except queue.Empty:
+            print("Wrapper timeout waiting for broker orderid")
+            brokerorderid = TIME_OUT
+
+        while self.wrapper.is_error():
+            print(self.get_error(timeout=MAX_WAIT_SECONDS))
+
+        return brokerorderid
+
+    def get_open_orders(self):
+        """
+        Returns a list of any open orders
+        """
+
+        # store the orders somewhere
+        open_orders_queue = finishableQueue(self.init_open_orders())
+
+        # You may prefer to use reqOpenOrders()
+        # which only retrieves orders for this client
+        self.reqAllOpenOrders()
+
+        # Run until we get a terimination or get bored waiting
+        MAX_WAIT_SECONDS = 5
+        open_orders_list = list_of_orderInformation(
+            open_orders_queue.get(timeout=MAX_WAIT_SECONDS))
+
+        while self.wrapper.is_error():
+            print(self.get_error())
+
+        if open_orders_queue.timed_out():
+            print("Exceeded maximum wait for wrapper to "
+                  "confirm finished whilst getting orders")
+
+        # open orders queue will be a jumble of order details,
+        # turn into a tidy dict with no duplicates
+        open_orders_dict = open_orders_list.merged_dict()
+
+        return open_orders_dict
 
     def resolve_ib_contract(self, ibcontract, reqId=DEFAULT_GET_CONTRACT_ID):
         """
@@ -407,35 +794,43 @@ class IBClient(EClient):
                                                 ibcontract.symbol, "got multiple contracts using first one")
         except (ResolveContractDetailsException, IBTimeoutException,
                 UnresolvedContractException, MultipleContractException) as exp:
-            logging.error(exp)
+            self.logger.warning(exp)
             return
 
-        new_contract_details = new_contract_details[0]
+        # dealing with different tws api versions
+        try:
+            resolved_ibcontract = new_contract_details[0].contract
+        except AttributeError as e:
+            new_contract_details = new_contract_details[0]
+            resolved_ibcontract = new_contract_details.summary
 
-        resolved_ibcontract = new_contract_details.summary
-        logging.info("resolved contract")
         return resolved_ibcontract
 
     def start_getting_IB_market_data(self, resolved_ibcontract,
-                                     tickerid=DEFAULT_MARKET_DATA_ID):
+                                     tickerid=DEFAULT_MARKET_DATA_ID,
+                                     snapshot=False):
         """
         Kick off market data streaming
         :param resolved_ibcontract: a Contract object
         :param tickerid: the identifier for the request
+        :param snapshot: bool
+            True: ask for market data snapshot
+            False:ask for market data stream
         :return: tickerid
         """
 
         self._market_data_q_dict[tickerid] = self.wrapper.init_market_data(tickerid)
-        self.reqMktData(tickerid, resolved_ibcontract, "", False, False, [])
+        self.reqMktData(tickerid, resolved_ibcontract, "", snapshot, False, [])
 
         return tickerid
 
-    def stop_getting_IB_market_data(self, tickerid):
+    def stop_getting_IB_market_data(self, tickerid, timeout=5):
         """
         Stops the stream of market data and returns all the data
         we've had since we last asked for it
 
         :param tickerid: identifier for the request
+        :param timeout: timeout in seconds
         :return: market data
         """
 
@@ -444,7 +839,7 @@ class IBClient(EClient):
 
         # Sometimes a lag whilst this happens, this prevents 'orphan'
         # ticks appearing
-        time.sleep(5)
+        time.sleep(timeout)
 
         market_data = self.get_IB_market_data(tickerid)
 
@@ -524,7 +919,7 @@ class IBClient(EClient):
                                                      finished.")
         except (HistoricalDataRetrieveException,
                 HistoricalDataTimeoutException) as exp:
-            logging.error(exp)
+            self.logger.warning(exp)
             return
 
         self.cancelHistoricalData(tickerid)

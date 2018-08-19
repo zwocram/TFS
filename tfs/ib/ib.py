@@ -325,6 +325,13 @@ class list_of_mergables(list):
 
         for stack_member in self:
             id = stack_member.id
+            if id == 0:
+                try:
+                    order = getattr(stack_member, 'order')
+                    id = order.permId
+                except AttributeError as e:
+                    id = stack_member.permid
+            stack_member.id = id
             if id not in new_stack_dict.keys():
                 # not in new stack yet, create a 'blank' object
                 # Note this will have no attributes,
@@ -498,12 +505,13 @@ class IBWrapper(EWrapper):
                     avgFillPrice, permid, parentId, lastFillPrice,
                     clientId, whyHeld):
 
-        self.logger.info("in order status")
-#        self.logger.info("Order status:", status,
-#                        "filled: ", filled,
-#                        "avgFillPrice: ", avgFillPrice,
-#                        "lastFillPrice: ", lastFillPrice,
-#                        "order id: ", orderId)
+        self.logger.info(
+            "Order status: %s, "
+            "filled: %s, "
+            "avgFillPrice: %s, "
+            "lastFillPrice: %s, "
+            "order id: %s.",
+            status, filled, avgFillPrice, lastFillPrice, orderId)
 
         order_details = orderInformation(
             orderId, status=status, filled=filled,
@@ -519,11 +527,12 @@ class IBWrapper(EWrapper):
         overriden method
         """
 
-        self.logger.info("in open order")
-#        self.logger.info(
-#            orderId, order.orderType, order.action,
-#            contract.symbol, "(" + contract.secType + ")",
-#            order.totalQuantity, "@", order.auxPrice, order.tif)
+        self.logger.info(
+            "Order: %s, %s %s %s (%s) %s@%s %s",
+            orderId, order.orderType, order.action,
+            contract.symbol, contract.secType, order.totalQuantity,
+            order.auxPrice, order.tif
+        )
 
         order_details = orderInformation(orderId, contract=contract,
                                          order=order, orderstate=orderstate)

@@ -65,15 +65,18 @@ if __name__ == '__main__':
     eod = options.eod
     test_mode = options.test
 
-    try:
-        app = ib.IB("127.0.0.1", 4011, 5192)  # use master id
-    except AttributeError as exp:
-        print("Could not connect to the TWS API application.")
-        sys.exit()
-
     db = Database()
     tfs_strat = TFS()
     driver = Driver()
+
+    settings_from_db = db.get_settings_from_db(
+        ('masterid',))
+
+    try:
+        app = ib.IB("127.0.0.1", 4011, int(settings_from_db['masterid']))
+    except AttributeError as exp:
+        print("Could not connect to the TWS API application.")
+        sys.exit()
 
     current_time = app.get_time()
 

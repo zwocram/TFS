@@ -26,14 +26,14 @@ class Database(object):
         self._db_connection = sqlite3.connect('db/tfs.db')
         self._db_cursor = self._db_connection.cursor()
 
-    def _exec_query(self, query):
+    def _exec_query(self, query, params=None):
         """Executes a query against the database. Any query can be
         executed: select, insert or update statements
         """
         crs = None
 
         try:
-            crs = self._db_cursor.execute(query)
+            crs = self._db_cursor.execute(query, params)
         except sqlite3.IntegrityError:
             print("Can't execute query; record already exists: \n", query)
         except Exception as e:
@@ -93,6 +93,29 @@ class Database(object):
         sql = "select * from Account"
 
         return self._exec_query(sql)
+
+    def get_settings_from_db(self, params=None):
+        """
+        Select all or specific settings from the
+        Settings table.
+
+        :param params: parameters to retrieve. If None, get all
+
+        :return: dictionary with params and values
+        """
+
+        sql = """
+            select *
+            from Settings
+            where param in (%s)
+            """ % ','.join('?' * len(params))
+
+        settings_dict = {}
+        settings = self._exec_query(sql, params).fetchall()
+        for setting in settings:
+            settings_dict[setting[0]] = setting[1]
+
+        return settings_dict
 
     def get_position_size(self, ticker):
         """

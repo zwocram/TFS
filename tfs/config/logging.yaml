@@ -16,9 +16,9 @@ handlers:
     filename: logs/log.log
   email:
     class: logging.handlers.SMTPHandler
-    mailhost: smtp.xs4all.nl
-    fromaddr: mnz@xs4all.nl
-    toaddrs: mnz@xs4all.nl
+    mailhost: get_value_from_db
+    fromaddr: get_value_from_db
+    toaddrs: get_value_from_db
     subject: 'TFS log: '
     level: CRITICAL
     formatter: simple
@@ -30,5 +30,5 @@ loggers:
     level: DEBUG
     handlers: [email]
 root:
-  level: INFO
+  level: DEBUG
   handlers: [file, email]

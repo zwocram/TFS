@@ -132,6 +132,10 @@ if __name__ == '__main__':
             eod_data = driver.add_columns(eod_data, ['next_price_target'])
             driver.update_stop_orders(new_dataset)
 
+            prepared_orders = driver.prepare_orders(
+                eod_data,
+                config.items('portfolio'))
+
             try:
                 chart = driver.draw_bulletgraph(eod_data)
             except Exception as e:

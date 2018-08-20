@@ -2,6 +2,7 @@ import pdb
 import time
 import decimal
 import datetime
+import logging
 
 import pandas as pd
 import numpy as np
@@ -24,6 +25,9 @@ from ib.ibexceptions import GetAccountDataException, \
 class Driver(object):
     """Class that drives 'The Process'.
     """
+
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
 
     def spot_trading_opportunities(self, instrument_eod_data, tfs_settings,
                                    account_size):
@@ -573,3 +577,42 @@ class Driver(object):
             except Exception as e:
                 raise GetDataFromMarketDataException(e)
             return att_values
+
+    def prepare_orders(self, eod_data, instr_list):
+        """Checks if orders have to be prepared based on
+        the EOD data.
+
+        :param eod_data: dataset with all relevant EOD data
+        :param instr_list: list with instrument's metadata (ib contract info)
+
+        :return: ???
+        """
+
+        prepared_orders = []
+        db = Database()
+
+        candidates = \
+            eod_data.loc[(eod_data['close'] < eod_data['55DayLow'])
+                         | (eod_data['close'] > eod_data['55DayHigh'])]
+
+        if candidates.shape[0] > 0:
+            for index, row in candidates.iterrows():
+                ticker = row['ticker']
+                quantity = row['pos_size (1st)']
+                if row['close'] > row['55DayHigh']:
+                    action = "BUY"
+                elif row['close'] < row['55DayLow']:
+                    action = "SELL"
+
+                meta = [ins for ins in instr_list
+                        if ins[0].upper() == ticker][0]
+                meta_dict = self._get_instrument_metadata(meta)
+                db.add_order_to_queue(quantity, action, "LMTADP",
+                                      ticker=ticker,
+                                      sectype=meta_dict['sec_type'],
+                                      exchange=meta_dict['exchange'],
+                                      currency=meta_dict['currency'])
+
+                prepared_orders.append(ticker)
+
+        return prepared_orders

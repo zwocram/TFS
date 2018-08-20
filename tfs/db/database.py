@@ -274,7 +274,9 @@ class Database(object):
 
         return self._exec_query(sql)
 
-    def add_order_to_queue(self, ibcontract, quantity, action, order_type):
+    def add_order_to_queue(self, quantity, action, order_type,
+                           ibcontract=None, ticker="", sectype="",
+                           exchange="", currency=""):
         """Add contract data to order queue tabel
         to prepare for the next trading session.
 
@@ -285,10 +287,11 @@ class Database(object):
         :return: inserted item id in OrdersQueue table
         """
 
-        ticker = ibcontract.symbol
-        sectype = ibcontract.secType
-        exchange = ibcontract.exchange
-        currency = ibcontract.currency
+        if ibcontract is not None:
+            ticker = ibcontract.symbol
+            sectype = ibcontract.secType
+            exchange = ibcontract.exchange
+            currency = ibcontract.currency
 
         status = "pending"
         dat_entered = datetime.datetime.now().isoformat()

@@ -130,6 +130,10 @@ if __name__ == '__main__':
             print(eod_data)
             driver.update_stop_orders(new_dataset)
 
+            prepared_orders = driver.prepare_orders(
+                eod_data,
+                config.items('portfolio'))
+
             try:
                 chart = driver.draw_bulletgraph(eod_data)
             except Exception as e:

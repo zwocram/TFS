@@ -595,7 +595,7 @@ class Driver(object):
             eod_data.loc[(eod_data['close'] < eod_data['55DayLow'])
                          | (eod_data['close'] > eod_data['55DayHigh'])]
 
-        if candidates.shape[0] > 0:
+        if not candidates.empty:
             for index, row in candidates.iterrows():
                 ticker = row['ticker']
                 quantity = row['pos_size (1st)']

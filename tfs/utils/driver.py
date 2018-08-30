@@ -30,18 +30,20 @@ class Driver(object):
         self.logger = logging.getLogger(__name__)
 
     def spot_trading_opportunities(self, instrument_eod_data, tfs_settings,
-                                   account_size):
+                                   account_size, port_config):
         """Checks the EOD data and checks if there are trading
         opportunities.
 
         :param instrument_eod_data: dataframe row containing
             the EOD data for an instrument
-        :param tfs_data: tfs section of the settings file
+        :param tfs_settings: tfs section of the settings file
+        :param account_size: equity value of IB account
+        :param port_config: portfolio data from config file
         """
 
         db = Database()
 
-        eod_data = self._transform_eod_data(instrument_eod_data)
+        eod_data = self._transform_eod_data(instrument_eod_data)  # dict
 
         ticker = eod_data['ticker']
         eod_data['instrument_id'] = db.get_instrument_id(ticker).instr_id[0]
@@ -53,10 +55,11 @@ class Driver(object):
             instrument_eod_data.loc['stop_price'] = stop
             instrument_eod_data.loc['next_price_target'] = target
 
-        new_positions = self._modify_positions(
+        new_positions = self._check_positions(
             eod_data,
             tfs_settings,
-            account_size)
+            account_size,
+            port_config)
 
         return new_positions, instrument_eod_data
 
@@ -95,12 +98,13 @@ class Driver(object):
 
         try:
             account_info = ib.get_account_summary(9001)
+            account_number = account_info[0][1]
             buying_power = float([a[3] for a in account_info
                                   if a[2] == 'BuyingPower'][0])
             account_size = float([a[3] for a in account_info
                                   if a[2] == 'NetLiquidation'][0])
             time.sleep(sleep_time)
-            return buying_power, account_size
+            return buying_power, account_size, account_number
         except Exception as e:
             raise GetAccountDataException(e)
 
@@ -328,6 +332,8 @@ class Driver(object):
             eod_transform['st_day_low'] = data_row['20DayLow']
             eod_transform['ticker'] = data_row['ticker']
             eod_transform['atr'] = data_row['atr']
+            eod_transform['pos_size_1'] = data_row['pos_size (1st)']
+            eod_transform['pos_size_2'] = data_row['pos_size (other)']
         except Exception as e:
             raise TransformEODDataException(e)
 
@@ -386,13 +392,29 @@ class Driver(object):
             self,
             instrument_data,
             tfs_settings,
-            account_size):
+            account_size,
+            portfolio_config):
         """Checks if a brand new position has to be opened. If not,
         no action is taken.
 
+        :param instrument_data: row with instrument specific data:
+            'close_price'
+            'lt_day_high'
+            'lt_day_low'
+            'st_day_high'
+            'st_day_low'
+            'ticker'
+            'atr'
+            'pos_size_1'
+            'pos_size_2'
+        :param tfs_settings: tfs settings from config file
+        :param account_size: IB account size
+        :param portfolio_config: portfolio data from config file
+
+        :return:
+
         """
         db = Database()
-        date_today_iso = datetime.datetime.now().date().isoformat()
         ticker = instrument_data['ticker']
 
         potential_new_unit = self._potential_new_unit(
@@ -403,9 +425,18 @@ class Driver(object):
         if potential_new_unit is not None:
             create_new_unit = potential_new_unit[0]  # True/False
             pos_type = potential_new_unit[1]  # long/short
+            action = "BUY" if pos_type == "long" else "SELL"
             if create_new_unit:
                 instrument_id = db.get_instrument_id(ticker).instr_id[0]
+                self.logger.info("Ready to create %s position for %s." %
+                                 (pos_type.upper(), ticker))
                 # position_info = db.get_position_size(ticker)
+                prepared_order = self._prepare_order(
+                    instrument_data,
+                    portfolio_config,
+                    action)
+
+                """
                 new_position = db.create_position(
                     instrument_id,
                     date_today_iso)
@@ -419,14 +450,18 @@ class Driver(object):
                 position_info = db.get_position_size(ticker)
                 updated_pos = db.update_position(
                     position_info=position_info)
+                """
 
     def _add_new_unit(
             self,
             instrument_data,
             tfs_settings,
-            account_size):
+            account_size,
+            portfolio_config):
         """Checks if we have to add a new unit to an existing
         position.
+
+        :param portfolio_config: portfolio data from config file
 
         """
 
@@ -447,6 +482,9 @@ class Driver(object):
             price_target = instrument_data['position_info'].next_price_target.max()
             stop_price = instrument_data['position_info'].stop_price.min()
 
+        action = "BUY" if pos_type == "long" else "SELL"
+
+        pdb.set_trace()
         # check if we have to add units or move up stops
         if ((instrument_data['close_price'] > price_target
              and pos_type == "long")
@@ -454,6 +492,13 @@ class Driver(object):
                 and pos_type == "short")):
             if max_unit_id < tfs_settings['max_units']:
                 print('add new unit for {0}'.format(ticker))
+                self.logger.info("Add new unit for %s." % ticker)
+                prepared_order = self._prepare_order(
+                    instrument_data,
+                    portfolio_config,
+                    action,
+                    unit_nr=max_unit_id + 1)
+                """
                 self._insert_new_unit(
                     instrument_data,
                     tfs_settings,
@@ -464,51 +509,59 @@ class Driver(object):
                 position_info = db.get_position_size(ticker)
                 updated_pos = db.update_position(
                     position_info=position_info)
-
+                """
             elif max_unit_id == tfs_settings['max_units']:
                 if risk_exposure > 0:
                     print("move up stop for {0} and "
                           "set new stop level.".format(ticker))
+                    self.logger.info(
+                        "Move up stop for %s and "
+                        "set new stop level" % ticker.upper())
                     # calculate new stop, move it up only 1 ATR
                     updated_pos = db.update_position(
                         position_info=position_info,
                         break_even=True)
 
-    def _modify_positions(
+    def _check_positions(
             self,
             instrument_data,
             tfs_settings,
-            account_size):
+            account_size,
+            portfolio_config):
         """Checks if we can open new positions
         or scale in on existing ones.
 
         :param instrument_data: dict containing essential
             information about the instrument:
-            'close'
-            '55DayHigh'
-            '55DayLow'
-            '20DayHigh'
-            '20DayLow'
+            'close_price'
+            'lt_day_high'
+            'lt_day_low'
+            'st_day_high'
+            'st_day_low'
             'ticker'
             'atr'
+            'pos_size_1'
+            'pos_size_2'
         :param tfs_data: contains data in tfs section of config file
         :param account_size: value of the trading account
+        :param portfolio_config: portfolio data from config file
 
         :return: ???
         """
-        tfs_settings = self.get_tfs_settings(tfs_settings)
+        tfs_settings = self.get_tfs_settings(tfs_settings)  # dict
 
         if instrument_data['position_info'].shape[0] == 0:  # no positions
             self._create_first_unit(
                 instrument_data,
                 tfs_settings,
-                account_size)
+                account_size,
+                portfolio_config)
         elif instrument_data['position_info'].shape[0] > 0:  # >=1 positions
             new_unit = self._add_new_unit(
                 instrument_data,
                 tfs_settings,
-                account_size
-            )
+                account_size,
+                portfolio_config)
 
     def _potential_new_unit(self, close_price, lt_day_high, lt_day_low):
         """Checks if a new unit has to be created.
@@ -540,7 +593,7 @@ class Driver(object):
 
         :param position_info: information about the positions
         :return: 2 dimensional tuple with stop price and
-            next target price
+            next target price, np.nan if empty (so no open positions)
         """
 
         pos_size = position_info['position_info'].pos_size.min()
@@ -583,7 +636,7 @@ class Driver(object):
         the EOD data.
 
         :param eod_data: dataset with all relevant EOD data
-        :param instr_list: list with instrument's metadata (ib contract info)
+        :param instr_list: portfolio data from config file
 
         :return: ???
         """
@@ -616,3 +669,72 @@ class Driver(object):
                 prepared_orders.append(ticker)
 
         return prepared_orders
+
+    def _prepare_order(self, eod_data, portfolio_config, action,
+                       unit_nr=1):
+        """Checks if orders have to be prepared based on
+        the EOD data.
+
+        :param eod_data: dataset with all relevant EOD data
+            'close_price'
+            'lt_day_high'
+            'lt_day_low'
+            'st_day_high'
+            'st_day_low'
+            'ticker'
+            'atr'
+            'pos_size_1'
+            'pos_size_2'
+        :param portfolio_config: portfolio data from config file
+
+        :return: ???
+        """
+
+        db = Database()
+
+        ticker = eod_data['ticker']
+        if unit_nr == 1:
+            quantity = eod_data['pos_size_1']
+        else:
+            quantity = eod_data['pos_size_2']
+
+        meta = [ins for ins in portfolio_config
+                if ins[0].upper() == ticker][0]
+        meta_dict = self._get_instrument_metadata(meta)
+
+        db.add_order_to_queue(quantity, action, "LMTADP",
+                              ticker=ticker,
+                              sectype=meta_dict['sec_type'],
+                              exchange=meta_dict['exchange'],
+                              currency=meta_dict['currency'],
+                              unit_nr=unit_nr)
+
+        return ticker
+
+    def trace_order_status(self, orderId, order_details):
+        """Monitor the status of an order and
+        takes action to update the pending orders
+        table.
+
+        :param order_details: object with order info
+                    orderInformation(
+                    orderId, status=status, filled=filled,
+                    avgFillPrice=avgFillPrice, permid=permid,
+                    parentId=parentId, lastFillPrice=lastFillPrice,
+                    clientId=clientId, whyHeld=whyHeld)
+        :return:
+        """
+
+        self.logger.info(
+            "ORDER DETAILS UPDATE: "
+            "Order status: %s, "
+            "filled: %s, "
+            "avgFillPrice: %s, "
+            "lastFillPrice: %s, "
+            "order id: %s." %
+            (order_details.status, order_details.filled,
+             order_details.avgFillPrice, order_details.lastFillPrice,
+             orderId))
+
+        if order_details.status.lower() == "filled":
+            self.logger.info("ORDER %s FILLED!" % (orderId))

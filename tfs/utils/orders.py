@@ -352,6 +352,9 @@ class OrderSamples:
     </summary>"""
     @staticmethod
     def LimitOrder(action: str, quantity: float, limitPrice: float, adaptive=False, priority="Normal"):
+        """
+        priority values: Urgent, Normal, Patient
+        """
 
         order = Order()
         order.action = action

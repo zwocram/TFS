@@ -33,6 +33,7 @@ import numpy as np
 
 import pdb
 from ib.ibexceptions import *
+from utils.driver import Driver
 
 MAX_WAIT_SECONDS = 10
 DEFAULT_GET_CONTRACT_ID = 1001
@@ -403,6 +404,7 @@ class IBWrapper(EWrapper):
 
     def __init__(self):
         self.logger = logging.getLogger(__name__ + ".wrapper")
+        self.driver = Driver()
         self._my_contract_details = {}
         self._my_market_data_dict = {}
         self._my_open_orders = queue.Queue()
@@ -505,19 +507,13 @@ class IBWrapper(EWrapper):
                     avgFillPrice, permid, parentId, lastFillPrice,
                     clientId, whyHeld):
 
-        self.logger.info(
-            "Order status: %s, "
-            "filled: %s, "
-            "avgFillPrice: %s, "
-            "lastFillPrice: %s, "
-            "order id: %s.",
-            status, filled, avgFillPrice, lastFillPrice, orderId)
-
         order_details = orderInformation(
             orderId, status=status, filled=filled,
             avgFillPrice=avgFillPrice, permid=permid,
             parentId=parentId, lastFillPrice=lastFillPrice,
             clientId=clientId, whyHeld=whyHeld)
+
+        self.driver.trace_order_status(orderId, order_details)
 
         self._my_open_orders.put(order_details)
 
@@ -819,7 +815,8 @@ class IBClient(EClient):
         :return: tickerid
         """
 
-        self._market_data_q_dict[tickerid] = self.wrapper.init_market_data(tickerid)
+        self._market_data_q_dict[tickerid] = \
+            self.wrapper.init_market_data(tickerid)
         self.reqMktData(tickerid, resolved_ibcontract, "", snapshot, False, [])
 
         return tickerid
@@ -939,6 +936,35 @@ class IBClient(EClient):
         # Wait until we get a complete account data set.
         accounting_data = accounting_queue.get(timeout=MAX_WAIT_SECONDS)
         return accounting_data
+
+    def place_new_IB_order(self, ibcontract, order, orderid=None):
+        """
+        Places an order
+        Returns brokerorderid
+        """
+
+        # We can eithier supply our own ID or
+        # ask IB to give us the next valid one
+        if orderid is None:
+            self.logger.info("Getting orderid from IB")
+            orderid = self.get_next_brokerorderid()
+
+            if orderid is TIME_OUT:
+                raise Exception(
+                    "I couldn't get an orderid from IB, "
+                    "and you didn't provide an orderid")
+
+        # Note: It's possible if you have multiple trading
+        # instances for orderids to be submitted out of sequence
+        # in which case IB will break
+
+        self.placeOrder(
+            orderid,  # orderId,
+            ibcontract,  # contract,
+            order  # order
+        )
+
+        return orderid
 
 
 class IB(IBWrapper, IBClient):

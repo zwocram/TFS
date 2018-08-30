@@ -60,3 +60,7 @@ class AddContractToQueueException(Exception):
 
 class GetDataFromMarketDataException(Exception):
     pass
+
+
+class NoBidAskPricesAvailable(Exception):
+    pass

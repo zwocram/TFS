@@ -12,18 +12,28 @@ from utils import futures
 
 from utils.strategies import TFS, Unit
 from utils.driver import Driver
+from utils.sod import SOD
 from db.database import Database
 
 from ib import ib
 from ibapi.contract import Contract
 
+from pytz import timezone
+
 from config import tfslog
 
-EOD_TIME = datetime.time(22, 0)
+EOD_NY_TIME = datetime.time(16, 0)
+SOD_NY_TIME = datetime.time(9, 30)
 
 if __name__ == '__main__':
     # Check that the port is the same as on the Gateway
     # ipaddress is 127.0.0.1 if one same machine, clientid is arbitrary
+
+    # setup timezones
+    utc_tz = timezone('UTC')
+    eastern_tz = timezone('US/Eastern')
+    amsterdam_tz = timezone('Europe/Amsterdam')
+    fmt = '%Y-%m-%d %H:%M:%S %Z%z'
 
     # set up logging
     # setup log
@@ -82,33 +92,47 @@ if __name__ == '__main__':
 
     minute_interval = 5
     second_interval = 5
-    eod_job_started = None
+    eod_job_started = False
+    sod_job_started = False
 
-    print("Waiting till markets are closed.")
+    # retrieve account data
+    account_numbers = db.get_settings_from_db(
+        ('live_account', 'simu_account'))
+    live_acct_nbr = account_numbers['live_account']
 
-    """ONLY EXECUTE BELOW CODE IF TESTING
-    temp_time = datetime.datetime.now().time()
-    EOD_TIME = datetime.time(temp_time.hour, temp_time.minute + 1)
-    print(EOD_TIME)
-    """
+    account_info = driver.get_account_data(app)
+    if account_info is not None:
+        buying_power = account_info[0]
+        account_size = account_info[1]
+        connected_account_number = account_info[2]
 
     while(True):
         time.sleep(0.2)  # prevent the CPU from going wild
         curr_time = datetime.datetime.now().time()
-        date_today_iso = datetime.datetime.now().date().isoformat()
+        curr_utc_time = datetime.datetime.now(utc_tz)
+        curr_ams_time = curr_utc_time.astimezone(amsterdam_tz).time()
+        curr_ny_time = curr_utc_time.astimezone(eastern_tz).time()
 
-        if (curr_time > EOD_TIME and not eod_job_started) or test_mode:
+        if (SOD_NY_TIME < curr_ny_time < EOD_NY_TIME and sod_job_started is False):
+            logger.info("It's %s. Markets have opened in New York." %
+                        (curr_ams_time))
+
             app.init_error()
+            sod_job_started = True
 
-            print("Starting end of day process at {0}."
-                  "".format(datetime.datetime.now().time()))
+            try:
+                sod = SOD(app)
+                sod.start(live_acct_nbr, connected_account_number)
+            except Exception:
+                logger.error(Exception, exc_info=True)
+
+        elif (curr_ny_time > EOD_NY_TIME and eod_job_started is False) \
+                or test_mode:
+            logger.info("Starting EOD process at %s." %
+                        curr_ams_time)
+
+            app.init_error()
             eod_job_started = True
-
-            # retrieve account data
-            account_info = driver.get_account_data(app)
-            if account_info is not None:
-                buying_power = account_info[0]
-                account_size = account_info[1]
 
             # retrieve current exchange rate data
             hist_data = []
@@ -132,9 +156,23 @@ if __name__ == '__main__':
             eod_data = driver.add_columns(eod_data, ['next_price_target'])
             driver.update_stop_orders(new_dataset)
 
+            """
             prepared_orders = driver.prepare_orders(
                 eod_data,
                 config.items('portfolio'))
+            """
+
+            for index, row in eod_data.iterrows():
+                # https://stackoverflow.com/questions/25478528/updating-value-in-iterrow-for-pandas
+                recommendations, updated_row = \
+                    driver.spot_trading_opportunities(
+                        row,
+                        config['tfs'],
+                        account_size,
+                        config.items('portfolio'))
+                eod_data.loc[index, 'stop_price'] = updated_row['stop_price']
+                eod_data.loc[index, 'next_price_target'] = \
+                    updated_row['next_price_target']
 
             try:
                 chart = driver.draw_bulletgraph(eod_data)
@@ -169,20 +207,11 @@ if __name__ == '__main__':
                              'pos_size (1st)']])
 
             print("\n=============================\n")
-            for index, row in eod_data.iterrows():
-                # https://stackoverflow.com/questions/25478528/updating-value-in-iterrow-for-pandas
-                recommendations, updated_row = \
-                    driver.spot_trading_opportunities(
-                        row,
-                        config['tfs'],
-                        account_size)
-                eod_data.loc[index, 'stop_price'] = updated_row['stop_price']
-                eod_data.loc[index, 'next_price_target'] = \
-                    updated_row['next_price_target']
 
             # n_pos_instrument = db.get_position_size(ticker)
-        elif curr_time < EOD_TIME:
+        elif (curr_ny_time < EOD_NY_TIME and curr_ny_time < SOD_NY_TIME):
             eod_job_started = False
+            sod_job_started = False
 
         # store stuff in Database
         # blabla

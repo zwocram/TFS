@@ -337,15 +337,19 @@ class Database(object):
         dat_entered = datetime.datetime.now().isoformat()
 
         params = (ticker, sectype, exchange, currency, order_type,
-                  quantity, action, status, dat_entered, None, unit_nr)
+                  quantity, action, status, dat_entered, unit_nr)
 
         sql = """
             insert into OrderQueue(ticker, contract_sectype,
                 contract_exchange, contract_currency, order_type,
-                quantity, action, status, dat_entered, dat_updated, unit_nr)
-            values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                quantity, action, status, dat_entered, unit_nr)
+            values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
 
+        print("Executing sql in add_order_to_queue.\n"
+              "params: {0}\n"
+              "sql: {1}".format(params, sql)
+              )
         try:
             self._exec_query(sql, params)
         except Exception as e:

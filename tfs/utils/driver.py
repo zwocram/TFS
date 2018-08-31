@@ -484,7 +484,6 @@ class Driver(object):
 
         action = "BUY" if pos_type == "long" else "SELL"
 
-        pdb.set_trace()
         # check if we have to add units or move up stops
         if ((instrument_data['close_price'] > price_target
              and pos_type == "long")

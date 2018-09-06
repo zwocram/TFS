@@ -36,6 +36,7 @@ from ib.ibexceptions import *
 from utils.driver import Driver
 
 MAX_WAIT_SECONDS = 10
+MAX_TRIES_READING_QUEUE = 5
 DEFAULT_GET_CONTRACT_ID = 1001
 DEFAULT_HISTORIC_DATA_ID = 50
 DEFAULT_GET_CONTRACT_ID = 43
@@ -422,6 +423,24 @@ class IBWrapper(EWrapper):
         # Overriden method
         self._msg_queue.put(time_from_server)
         # self._time_queue.put(time_from_server)
+
+    def handle_queue_timeout(self, queue):
+        """Handles timeouts of queue readings. Try to read
+        the queue several times in case of delayed data
+        delivery by IB.
+
+        :param queue: the queue to be read
+
+        :return: the processed data in the queue
+        """
+
+        for t in range(MAX_TRIES_READING_QUEUE):
+            self.logger.info("Attempt %s to read hist data queue." % t)
+            queue_data = queue.get(timeout=MAX_WAIT_SECONDS)
+            if not queue_data.timed_out():
+                return queue_data
+
+        return queue.timed_out()
 
     # error handling code
     def init_error(self):
@@ -901,23 +920,22 @@ class IBClient(EClient):
             []  # chartoptions not used
         )
 
-        # Wait until we get a completed data, an error, or get bored waiting
-        historic_data = historic_data_queue.get(timeout=MAX_WAIT_SECONDS)
+        for t in range(MAX_TRIES_READING_QUEUE):
+            self.logger.info("Attempt %s to read hist data queue." % t)
+            historic_data = historic_data_queue.get(timeout=MAX_WAIT_SECONDS)
+            if not historic_data_queue.timed_out():
+                break
 
-        try:
-            while self.wrapper.is_error():
-                raise HistoricalDataRetrieveException(ibcontract.symbol,
-                                                      self.get_error())
+        while self.wrapper.is_error():
+            raise HistoricalDataRetrieveException(
+                ibcontract.symbol,
+                self.get_error())
 
-            if historic_data_queue.timed_out():
-                raise HistoricalDataTimeoutException(ibcontract.symbol,
-                                                     "Exceeded maximum wait \
-                                                     for wrapper to confirm \
-                                                     finished.")
-        except (HistoricalDataRetrieveException,
-                HistoricalDataTimeoutException) as exp:
-            self.logger.warning(exp)
-            return
+        if historic_data_queue.timed_out():
+            self.logger.info("Getting historical queue data time out.")
+            raise HistoricalDataTimeoutException(
+                ibcontract.symbol,
+                "Exceeded maximum wait for wrapper to confirm finished.")
 
         self.cancelHistoricalData(tickerid)
 

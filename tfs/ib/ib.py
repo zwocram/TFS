@@ -505,7 +505,7 @@ class IBWrapper(EWrapper):
 
     def orderStatus(self, orderId, status, filled, remaining,
                     avgFillPrice, permid, parentId, lastFillPrice,
-                    clientId, whyHeld):
+                    clientId, whyHeld, mktCapPrice=0):
 
         order_details = orderInformation(
             orderId, status=status, filled=filled,

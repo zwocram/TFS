@@ -1,6 +1,8 @@
 import sqlite3
+import pickle
 import pandas as pd
-
+import datetime
+import logging
 from ib.ibexceptions import *
 
 import pdb
@@ -23,19 +25,22 @@ class Database(object):
     def __init__(self):
         self._db_connection = sqlite3.connect('db/tfs.db')
         self._db_cursor = self._db_connection.cursor()
+        self.logger = logging.getLogger(__name__)
 
-    def _exec_query(self, query):
+    def _exec_query(self, query, params=None):
         """Executes a query against the database. Any query can be
         executed: select, insert or update statements
         """
         crs = None
 
         try:
-            crs = self._db_cursor.execute(query)
+            crs = self._db_cursor.execute(query, params)
         except sqlite3.IntegrityError:
             print("Can't execute query; record already exists: \n", query)
         except Exception as e:
-            print('Unexpected error: \n', e)
+            self.logger.warning("Unexpected error ('%s') while executing: %s",
+                                e, query)
+            print('Unexpected error while executing: \n', e)
         finally:
             self._db_connection.commit()
 
@@ -54,14 +59,15 @@ class Database(object):
         """
 
         category_id = 0
+        params = (category_name,)
         try:
             sql = """
                 select cat_id
                 from InstrumentCategory
-                where cat_description = '{0}'
-                """.format(category_name)
+                where cat_description = ?
+                """
 
-            df = pd.read_sql_query(sql, self._db_connection)
+            df = pd.read_sql_query(sql, self._db_connection, params=params)
             category_id = df.cat_id.min()
             return category_id
         except:
@@ -77,11 +83,12 @@ class Database(object):
         :return: project id
         """
 
-        sql = """insert into Account(date, account_size, buying_power)
-            values({0}, {1}, {2})""".format(date, account_size,
-                                            buying_power)
+        params = (date, account_size, buying_power)
 
-        self._exec_query(sql)
+        sql = """insert into Account(date, account_size, buying_power)
+            values(?, ?, ?)"""
+
+        self._exec_query(sql, params)
 
     def select_equity_timeseries(self):
         """
@@ -92,12 +99,36 @@ class Database(object):
 
         return self._exec_query(sql)
 
+    def get_settings_from_db(self, params=None):
+        """
+        Select all or specific settings from the
+        Settings table.
+
+        :param params: parameters to retrieve. If None, get all
+
+        :return: dictionary with params and values
+        """
+
+        sql = """
+            select *
+            from Settings
+            where param in (%s)
+            """ % ','.join('?' * len(params))
+
+        settings_dict = {}
+        settings = self._exec_query(sql, params).fetchall()
+        for setting in settings:
+            settings_dict[setting[0]] = setting[1]
+
+        return settings_dict
+
     def get_position_size(self, ticker):
         """
         Get the active position size of an instrument.
 
         :param ticker:
         """
+        params = (ticker,)
 
         sql = """
             select
@@ -117,11 +148,11 @@ class Database(object):
                     on ins.instr_category_id = tc.instr_cat_id
                 inner join Unit u
                     on u.pos_id = pos.pos_id
-            where ins.ticker = '{0}'
+            where ins.ticker = ?
                 and date_closed is null;
-            """.format(ticker)
+            """
 
-        df = pd.read_sql_query(sql, self._db_connection)
+        df = pd.read_sql_query(sql, self._db_connection, params=params)
         return df
 
     def create_unit(self, unit, unit_id, position_id,
@@ -147,18 +178,22 @@ class Database(object):
         else:
             first_unit = True
 
+        params = (unit_id,
+                  position_id,
+                  unit.price,
+                  unit.atr, price_target,
+                  unit.calc_position_size_risk_perc(
+                      first_unit=first_unit,
+                      long_short=position_type),
+                  unit.stop_level)
+
         sql = """
             insert into Unit(unit_id, pos_id, entry_price,
                 atr, next_price_target, pos_size, stop_price)
-            values({0}, {1}, {2}, {3}, {4}, {5}, {6})
-            """.format(unit_id, position_id, unit.price,
-                       unit.atr, price_target,
-                       unit.calc_position_size_risk_perc(
-                           first_unit=first_unit,
-                           long_short=position_type),
-                       unit.stop_level)
+            values(?, ?, ?, ?, ?, ?, ?)
+            """
 
-        return self._exec_query(sql).lastrowid
+        return self._exec_query(sql, params)
 
     def create_position(self, instrument_id, date_open):
         """Create a new position in the database.
@@ -168,12 +203,14 @@ class Database(object):
         :param date_open: the date on which the position was openend.
         """
 
+        params = (instrument_id, date_open)
+
         sql = """
             insert into Position(instr_id, date_open)
-            values({0}, '{1}')
-            """.format(instrument_id, date_open)
+            values(?, ?)
+            """
 
-        return self._exec_query(sql).lastrowid
+        return self._exec_query(sql, params)
 
     def get_instrument_id(self, instrument_ticker):
         """retrieves the instrument id
@@ -181,13 +218,14 @@ class Database(object):
         :param instrument_ticker: the ticker for the instrument_ticker
         """
 
+        params = (instrument_ticker,)
         sql = """
             select instr_id
             from Instrument
-            where ticker = '{0}'
-            """.format(instrument_ticker)
+            where ticker = ?
+            """
 
-        df = pd.read_sql_query(sql, self._db_connection)
+        df = pd.read_sql_query(sql, self._db_connection, params=params)
         return df
 
     def update_position(self, position_info=None,
@@ -214,16 +252,17 @@ class Database(object):
                 position_info['unit_id'] ==
                 position_info.unit_id.max()].stop_price.iloc[0]))
 
+            params = (average_price, total_pos_size, stop_price,
+                      position_id)
             sql = """
                 update Position
-                set avg_price = {0}
-                    , pos_size = {1}
-                    , stop_price = {2}
-                where pos_id = {3}
-                """.format(average_price, total_pos_size, stop_price,
-                           position_id)
+                set avg_price = ?
+                    , pos_size = ?
+                    , stop_price = ?
+                where pos_id = ?
+                """
 
-            self._exec_query(sql)
+            self._exec_query(sql, params)
 
     def exists_instrument(self, instrument):
         """Checks if instrument exists in databaseself.
@@ -239,6 +278,7 @@ class Database(object):
             ticker = instrument[0].upper()
             instrument_category = instrument[1].split(',')[5].lstrip()
 
+            params = (ticker, instrument_category)
             sql = """
                 select
                     i.ticker
@@ -247,16 +287,73 @@ class Database(object):
                 from Instrument i inner join InstrumentCategory c
                     on i.instr_category_id = c.cat_id
                 where
-                    i.ticker = '{0}'
-                    and c.cat_description = '{1}'
-                """.format(ticker, instrument_category)
+                    i.ticker = ?
+                    and c.cat_description = ?
+                """
 
-            df = pd.read_sql_query(sql, self._db_connection)
+            df = pd.read_sql_query(sql, self._db_connection, params=params)
             if df.size == 0:
                 exists = False
             return exists
         except Exception as e:
             raise CheckInstrumentExistenceException(e)
+
+    def get_pending_orders(self):
+        """Selects pending orders from the database.
+
+        :return: set with pending orders
+        """
+
+        params = ('pending',)
+
+        sql = """
+            select *
+            from OrderQueue
+            where status = ?
+            """
+
+        return self._exec_query(sql, params)
+
+    def add_order_to_queue(self, quantity, action, order_type,
+                           ibcontract=None, ticker="", sectype="",
+                           exchange="", currency="", unit_nr=1):
+        """Add contract data to order queue tabel
+        to prepare for the next trading session.
+
+        :param contract: ib contract
+        :param quantity: how much to buy/sell
+        :param action: do we buy or sell?
+
+        :return: inserted item id in OrdersQueue table
+        """
+
+        if ibcontract is not None:
+            ticker = ibcontract.symbol
+            sectype = ibcontract.secType
+            exchange = ibcontract.exchange
+            currency = ibcontract.currency
+
+        status = "pending"
+        dat_entered = datetime.datetime.now().isoformat()
+
+        params = (ticker, sectype, exchange, currency, order_type,
+                  quantity, action, status, dat_entered, unit_nr)
+
+        sql = """
+            insert into OrderQueue(ticker, contract_sectype,
+                contract_exchange, contract_currency, order_type,
+                quantity, action, status, dat_entered, unit_nr)
+            values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+
+        print("Executing sql in add_order_to_queue.\n"
+              "params: {0}\n"
+              "sql: {1}".format(params, sql)
+              )
+        try:
+            self._exec_query(sql, params)
+        except Exception as e:
+            raise AddContractToQueueException(e)
 
     def insert_new_instrument(self, instrument):
         """Checks if instrument exists in databaseself.
@@ -272,12 +369,29 @@ class Database(object):
             instrument_category = instrument[1].split(',')[5].lstrip()
             category_id = self._get_category_id(instrument_category)
 
+            params = (ticker, instrument_description, category_id)
             sql = """
                 insert into
                     Instrument(ticker, description, instr_category_id)
-                values('{0}', '{1}', {2})
-                """.format(ticker, instrument_description, category_id)
+                values(?, ?, ?)
+                """
 
-            return self._exec_query(sql).lastrowid
+            return self._exec_query(sql, params).lastrowid
         except Exception as e:
             raise InsertNewInstrumentException(e)
+
+    def update_order_queue(self, order_queue_id, ib_orderId):
+        """Updates the OrderQueue table with an actual IB orderId
+
+        :param order_queue_id: record id of the order to update
+        :param ib_orderId: orderId that IB provided
+        """
+
+        params = (ib_orderId, order_queue_id)
+        sql = """
+            update OrderQueue
+            set order_id = ?
+            where order_queue_id = ?
+            """
+
+        self._exec_query(sql, params)

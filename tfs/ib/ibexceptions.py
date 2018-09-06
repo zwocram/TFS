@@ -44,3 +44,23 @@ class TransformEODDataException(Exception):
 
 class InsertNewUnitException(Exception):
     pass
+
+
+class AddStopOrdersException(Exception):
+    pass
+
+
+class UpdateStopOrderException(Exception):
+    pass
+
+
+class AddContractToQueueException(Exception):
+    pass
+
+
+class GetDataFromMarketDataException(Exception):
+    pass
+
+
+class NoBidAskPricesAvailable(Exception):
+    pass

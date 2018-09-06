@@ -127,13 +127,15 @@ class Driver(object):
             f_metadata["exchange"],
             f_metadata["currency"])
 
-        historic_data = ib.get_IB_historical_data(contract,
+        try:
+            historic_data = ib.get_IB_historical_data(contract,
                                                   duration=duration)
-
-        # close_set = f_metadata["identifier"], \
-        #    float("{0:.4f}".format(historic_data[0][4]))
-        time.sleep(sleep_time)
-        ib.init_error()
+        except Exception as e:
+            self.logger.error("Error retrieving historical data: %s" % e)
+            return
+        finally:
+            time.sleep(sleep_time)
+            ib.init_error()
 
         return historic_data
 

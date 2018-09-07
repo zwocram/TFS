@@ -140,8 +140,7 @@ if __name__ == '__main__':
                 forex_data = driver.get_historical_data(
                     app,
                     instr,
-                    "1 D",
-                    sleep_time=4)
+                    "1 D")
                 hist_data.append(forex_data)
 
             eod_data = tfs_strat.eod_data(

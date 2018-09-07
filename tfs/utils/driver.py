@@ -112,12 +112,11 @@ class Driver(object):
         except Exception as e:
             raise GetAccountDataException(e)
 
-    def get_historical_data(self, ib, instrument, duration="60 D",
-                            sleep_time=5):
+    def get_historical_data(self, ib, instrument, duration="60 D"):
         """Get daily forex market data.
 
         :param ib: the ib application
-        :param forex_list: list of forex items to be processed.
+        :param isntrument: .
 
         :return: returns dictionary with forex data.
         """

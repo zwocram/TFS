@@ -19,7 +19,11 @@ from ib.ibexceptions import GetAccountDataException, \
     InsertNewUnitException, \
     UpdateStopOrderException, \
     AddStopOrdersException, \
-    GetDataFromMarketDataException
+    GetDataFromMarketDataException, \
+    ResolveContractDetailsException, \
+    IBTimeoutException, \
+    UnresolvedContractException, \
+    MultipleContractException
 
 
 class Driver(object):
@@ -120,22 +124,27 @@ class Driver(object):
 
         f_metadata = self._get_instrument_metadata(instrument)
 
-        contract = self._get_ib_contract(
-            ib,
-            f_metadata["sec_type"],
-            f_metadata["ticker"],
-            f_metadata["exchange"],
-            f_metadata["currency"])
-
         try:
-            historic_data = ib.get_IB_historical_data(contract,
-                                                  duration=duration)
-        except Exception as e:
-            self.logger.error("Error retrieving historical data: %s" % e)
+            contract = self._get_ib_contract(
+                ib,
+                f_metadata["sec_type"],
+                f_metadata["ticker"],
+                f_metadata["exchange"],
+                f_metadata["currency"])
+            historic_data = ib.get_IB_historical_data(
+                contract,
+                duration=duration)
+        except (ResolveContractDetailsException,
+            IBTimeoutException,
+            UnresolvedContractException,
+            MultipleContractException) as e:
+            self.logger.error("Error getting contract data for %s: %s" %
+                (f_metadata["ticker"], e), exc_info=True)
             return
-        finally:
-            time.sleep(sleep_time)
-            ib.init_error()
+        except Exception as e:
+            self.logger.error("Error retrieving historical data for %s: %s"
+                % (f_metadata["ticker"], e), exc_info=True)
+            return
 
         return historic_data
 
@@ -272,7 +281,12 @@ class Driver(object):
         ibcontract.exchange = exchange_name
         ibcontract.currency = currency
 
-        return ib.resolve_ib_contract(ibcontract)
+        try:
+            return ib.resolve_ib_contract(ibcontract)
+        except Exception as e:
+            self.logger.error("Error getting contract data for %s: %s"
+                % (symbol, e))
+            raise
 
     def _get_instrument_metadata(self, instrument):
         """Retrieves the metadata for each instrument in the

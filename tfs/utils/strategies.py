@@ -58,8 +58,6 @@ class TFS(Strategy):
                 df_temp = pd.DataFrame(eod_data, index=[p[0].upper()])
                 eod_df = eod_df.append(df_temp)
 
-            app.init_error()
-
         return eod_df
 
     def _invert_exchange_rate(self, df, ticker):

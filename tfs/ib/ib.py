@@ -776,41 +776,46 @@ class IBClient(EClient):
         :returns fully resolved IB contract
         """
 
+        self.wrapper.init_error()
+
         # Make a place to store the data we're going to return
         contract_details_queue = finishableQueue(self.init_contractdetails(reqId))
 
         self.reqContractDetails(reqId, ibcontract)
 
-        # Run until we get a valid contract(s) or get bored waiting
-        new_contract_details = contract_details_queue.get(timeout=MAX_WAIT_SECONDS)
+        for t in range(MAX_TRIES_READING_QUEUE):
+            self.logger.info("Attempt %s to get contract for %s."
+                % (t + 1, ibcontract.symbol))
+            new_contract_details = contract_details_queue.get(
+                timeout=MAX_WAIT_SECONDS)
+            if not contract_details_queue.timed_out():
+                break
 
-        try:
-            while self.wrapper.is_error():
-                raise ResolveContractDetailsException(
-                    "ResolveContractDetailsException", ibcontract.symbol,
-                    self.get_error())
-                # print(self.get_error())
+        while self.wrapper.is_error():
+            raise ResolveContractDetailsException(
+                "ResolveContractDetailsException",
+                ibcontract.symbol,
+                self.get_error())
 
-            if contract_details_queue.timed_out():
-                raise IBTimeoutException("IBTimeoutException",
-                                         ibcontract.symbol, "Exceeded maximum wait for wrapper "
-                                         " to confirm finished")
+        if contract_details_queue.timed_out():
+            raise IBTimeoutException(
+                "IBTimeoutException",
+                ibcontract.symbol,
+                "Exceeded maximum wait for wrapper to confirm finished")
 
-            if len(new_contract_details) == 0:
-                raise UnresolvedContractException(
-                    "UnresolvedContractException",
-                    ibcontract.symbol,
-                    "Failed to get additional "
-                    "contract details: returning "
-                    "unresolved contract")
+        if len(new_contract_details) == 0:
+            raise UnresolvedContractException(
+                "UnresolvedContractException",
+                ibcontract.symbol,
+                "Failed to get additional "
+                "contract details: returning "
+                "unresolved contract")
 
-            if len(new_contract_details) > 1:
-                raise MultipleContractException("MultipleContractException",
-                                                ibcontract.symbol, "got multiple contracts using first one")
-        except (ResolveContractDetailsException, IBTimeoutException,
-                UnresolvedContractException, MultipleContractException) as exp:
-            self.logger.warning(exp)
-            return
+        if len(new_contract_details) > 1:
+            raise MultipleContractException(
+                "MultipleContractException",
+                ibcontract.symbol,
+                "got multiple contracts using first one")
 
         # dealing with different tws api versions
         try:
@@ -903,6 +908,8 @@ class IBClient(EClient):
         else:
             what_to_show = "TRADES"
 
+        self.wrapper.init_error()
+
         # Make a place to store the data we're going to return
         historic_data_queue = finishableQueue(self.init_historicprices(tickerid))
 
@@ -921,7 +928,8 @@ class IBClient(EClient):
         )
 
         for t in range(MAX_TRIES_READING_QUEUE):
-            self.logger.info("Attempt %s to read hist data queue." % t)
+            self.logger.info("Attempt %s to read hist data queue for %s."
+                % (t + 1, ibcontract.symbol))
             historic_data = historic_data_queue.get(timeout=MAX_WAIT_SECONDS)
             if not historic_data_queue.timed_out():
                 break
@@ -938,6 +946,7 @@ class IBClient(EClient):
                 "Exceeded maximum wait for wrapper to confirm finished.")
 
         self.cancelHistoricalData(tickerid)
+        time.sleep(2) # give the cancellation some time
 
         return historic_data
 

@@ -24,7 +24,7 @@ from ib import ib
 from ibapi.contract import Contract
 
 MAX_DAYS_HISTORY = '150 D'
-NR_LEAST_CORRELATED_ITEMS = 20
+NR_LEAST_CORRELATED_ITEMS = 3
 
 if __name__ == '__main__':
 
@@ -61,7 +61,7 @@ if __name__ == '__main__':
         logging.basicConfig(format='%(levelname)s %(asctime)s: %(message)s',
                             filename='logs/log.log',
                             filemode='w', level=logging.INFO)
-        logging.warning('loggin created')
+        logging.warning('login created')
 
         # read config file
         config = configparser.ConfigParser()
@@ -93,10 +93,10 @@ if __name__ == '__main__':
             print('processing', identifier)
 
             resolved_ibcontract = app.resolve_ib_contract(ibcontract)
-            historic_data = app.get_IB_historical_data(resolved_ibcontract,
-                                                       duration=MAX_DAYS_HISTORY)
+            historic_data = app.get_IB_historical_data(
+                resolved_ibcontract,
+                duration=MAX_DAYS_HISTORY)
 
-            time.sleep(5)
             if historic_data is not None:
                 df = pd.DataFrame(historic_data,
                                   columns=['date', 'open', 'high',
@@ -110,8 +110,6 @@ if __name__ == '__main__':
                 else:
                     corr_df = corr_df.join(df)
                 # print(corr_df)
-
-            app.init_error()
 
         df_corr = corr_df.corr().abs()
 

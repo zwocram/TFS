@@ -30,10 +30,10 @@ class SOD(object):
         """
 
         ibcontract = Contract()
-        ticker = pending_order[2]
-        sectype = pending_order[3]
-        exchange = pending_order[4]
-        currency = pending_order[5]
+        ticker = pending_order[1]
+        sectype = pending_order[2]
+        exchange = pending_order[3]
+        currency = pending_order[4]
 
         ibcontract.secType = sectype
         ibcontract.symbol = ticker
@@ -51,7 +51,7 @@ class SOD(object):
 
         tickerid = self.ib.start_getting_IB_market_data(
             ibcontract, snapshot=True)
-        time.sleep(5)
+        time.sleep(15)
         market_data = self.ib.stop_getting_IB_market_data(
             tickerid, timeout=5)
         df_mkt_data = market_data.as_pdDataFrame()
@@ -77,9 +77,9 @@ class SOD(object):
         os = orders.OrderSamples()
 
         order_queue_id = pending_order[0]
-        order_type = pending_order[6]
-        quantity = pending_order[7]
-        action = pending_order[8]
+        order_type = pending_order[5]
+        quantity = pending_order[6]
+        action = pending_order[7]
 
         price = prices[0] if action == "BUY" else prices[1]
         adptv = True if order_type == "LMTADP" else False
@@ -101,7 +101,7 @@ class SOD(object):
             self.logger.info("Security check: we're using simulated "
                              "account so continue safely.")
 
-            pending_orders = self.db.get_pending_orders()
+            pending_orders = self.db.get_pending_orders().fetchall()
             for row in pending_orders:
                 ibcontract = self._create_contract(row)
                 prices = self._get_bid_ask(ibcontract)
@@ -110,6 +110,6 @@ class SOD(object):
                         "No prices found for %s." %
                         ibcontract.symbol)
                 else:
-                    self._send_order(prices, row, ibcontract)
+                    send_order = self._send_order(prices, row, ibcontract)
         else:
             self.logger.info("Be careful, we're on live account. Don't trade!")

@@ -736,7 +736,8 @@ class IBClient(EClient):
             brokerorderid = TIME_OUT
 
         while self.wrapper.is_error():
-            print(self.get_error(timeout=MAX_WAIT_SECONDS))
+            self.logger.error("IB error in get_next_broker_id:" %
+                self.get_error(timeout=MAX_WAIT_SECONDS))
 
         return brokerorderid
 
@@ -758,7 +759,8 @@ class IBClient(EClient):
             open_orders_queue.get(timeout=MAX_WAIT_SECONDS))
 
         while self.wrapper.is_error():
-            print(self.get_error())
+            self.logger.error("IB error in get_open_orders: %s"
+                % self.get_error())
 
         if open_orders_queue.timed_out():
             print("Exceeded maximum wait for wrapper to "
@@ -839,6 +841,8 @@ class IBClient(EClient):
         :return: tickerid
         """
 
+        self.wrapper.init_error()
+
         self._market_data_q_dict[tickerid] = \
             self.wrapper.init_market_data(tickerid)
         self.reqMktData(tickerid, resolved_ibcontract, "", snapshot, False, [])
@@ -866,7 +870,8 @@ class IBClient(EClient):
 
         # output ay errors
         while self.wrapper.is_error():
-            print(self.get_error())
+            self.logger.error("IB error in stop_getting_IB_market_data for "
+                " %s: %s" % (tickerid, self.get_error()))
 
         return market_data
 

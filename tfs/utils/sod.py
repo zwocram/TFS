@@ -3,6 +3,7 @@ import time
 import pandas as pd
 from utils import orders
 from utils.driver import Driver
+from utils.strategies import Strategy
 
 from db.database import Database
 from ib.ibexceptions import NoBidAskPricesAvailable
@@ -20,6 +21,7 @@ class SOD(object):
         self.driver = Driver()
         self.ib = ib
         self.db = Database()
+        self.strategy = Strategy()
 
     def _create_contract(self, pending_order):
         """Creates an IB contract.
@@ -41,30 +43,6 @@ class SOD(object):
         ibcontract.currency = currency
 
         return self.ib.resolve_ib_contract(ibcontract)
-
-    def _get_bid_ask(self, ibcontract):
-        """Inititates market data retrieval for a contract.
-
-        :param ibcontract: request market data for this contract
-        :return: ???
-        """
-
-        tickerid = self.ib.start_getting_IB_market_data(
-            ibcontract, snapshot=True)
-        time.sleep(15)
-        market_data = self.ib.stop_getting_IB_market_data(
-            tickerid, timeout=5)
-        df_mkt_data = market_data.as_pdDataFrame()
-        atts = ['bid_price', 'ask_price']
-        prices = self.driver.get_specific_data_from_mkt_data(
-            df_mkt_data, atts)
-
-        if pd.isna(prices[0]) or pd.isna(prices[1]):  # no valid prices
-            return
-
-        self.logger.info("Valid prices found for %s: %f, %f" %
-                         (tickerid, prices[0], prices[1]))
-        return prices
 
     def _send_order(self, prices, pending_order, ibcontract):
         """Send an order to IB.
@@ -104,7 +82,8 @@ class SOD(object):
             pending_orders = self.db.get_pending_orders().fetchall()
             for row in pending_orders:
                 ibcontract = self._create_contract(row)
-                prices = self._get_bid_ask(ibcontract)
+                prices = self.strategy.get_specific_market_data(
+                    self.ib, ibcontract, req_atts=['bid_price', 'ask_price'])
                 if prices is None:
                     self.logger.error(
                         "No prices found for %s." %

@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import time
+import logging
 import decimal
 import numpy as np
 import pandas as pd
@@ -12,11 +13,83 @@ from utils.driver import Driver
 from db.database import Database
 from ibapi.contract import Contract
 
+from ib.ibexceptions import GetDataFromMarketDataException
 
 class Strategy(object):
     def __init__(self):
+        self.logger = logging.getLogger(__name__)
         self.driver = Driver()
 
+    def _return_attributes_from_market_data(self, atts, mkt_data):
+        """Based on a list of attributes, extract
+        the required attributes from a market data
+        dataframe
+
+        :param atts: attributes to retrieve
+        :param mkt_data: dataframe with market data
+
+        :param values: list of required values
+        """
+
+        att_values = []
+        try:
+            for att in atts:
+                att_value = mkt_data[att].dropna()[-1:].min()
+                att_values.append(float("{0:.4f}".format(att_value)))
+        except Exception as e:
+            raise GetDataFromMarketDataException(e)
+        return att_values
+
+    def get_specific_market_data(self, ib, ibcontract, req_atts=None,
+        interval=4, max_nr_requests=5):
+        """Requests specific data from the market data queue.
+        For example, in specific circumstances, we'd only
+        like to have bid price and mask price.
+
+        The approach is to start the market data request for
+        a specific interval, say 5 seconds. If, during
+        that period, the required attributes are not present
+        in the queue, do the request again but now for the
+        duration of 10 seconds. Do this for a predetermined
+        number of times.
+
+        :param ib: ib object
+        :param ibcontract: ib contract
+        :param req_atts: list with attributes to look for
+        :param interval: duration of initial request
+        :param max_nr_requests: max number of market data requests
+            If requested attributes still not in the market data
+            queue, then raise an error
+
+        :return: list with requested values
+        """
+
+        attributes_found = True
+        tries = range(max_nr_requests)
+        for t in tries:
+            self.logger.info("Attempt %s to retrieve requested market data %s."
+                % ((t + 1), ','.join(req_atts)))
+            tickerid = ib.start_getting_IB_market_data(
+                ibcontract, snapshot=True)
+            time.sleep((t + 1) * interval)
+            market_data = ib.stop_getting_IB_market_data(
+                tickerid, timeout=5)
+            df_mkt_data = market_data.as_pdDataFrame()
+            values = self._return_attributes_from_market_data(
+                        req_atts, df_mkt_data)
+
+            for val in values:
+                if pd.isna(val):
+                    attributes_found = False
+                    break
+
+            if attributes_found:
+                #self.logger.info("Valid market data attributes found "
+                #    "for %s: %f, %f" % (tickerid, prices[0], prices[1]))
+                self.logger.info("Valid market data attributes '%s' "
+                    "found: %s" % (','.join(req_atts),
+                    ','.join([str(v) for v in values])))
+                return values
 
 class TFS(Strategy):
     def eod_data(self, ib=None, portfolio_list=None, tfs_settings=None,

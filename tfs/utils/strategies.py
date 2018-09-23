@@ -15,10 +15,29 @@ from ibapi.contract import Contract
 
 from ib.ibexceptions import GetDataFromMarketDataException
 
+
 class Strategy(object):
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.driver = Driver()
+
+    def FXHedgeContract(self, symbol, currency="EUR"):
+        """Creates a fx hedge contract
+
+        :param currency: the base currency of the IB account; the currency
+            to which the instrument currency has to be swapped
+        :param symbol: the currency of the instrument that has to
+            be hedged
+
+        :return: the fx hedging contract
+        """
+        contract = Contract()
+        contract.symbol = symbol
+        contract.secType = "CASH"
+        contract.currency = currency
+        contract.exchange = "IDEALPRO"
+
+        return contract
 
     def _return_attributes_from_market_data(self, atts, mkt_data):
         """Based on a list of attributes, extract
@@ -41,7 +60,7 @@ class Strategy(object):
         return att_values
 
     def get_specific_market_data(self, ib, ibcontract, req_atts=None,
-        interval=4, max_nr_requests=5):
+                                 interval=4, max_nr_requests=5):
         """Requests specific data from the market data queue.
         For example, in specific circumstances, we'd only
         like to have bid price and mask price.
@@ -68,7 +87,7 @@ class Strategy(object):
         tries = range(max_nr_requests)
         for t in tries:
             self.logger.info("Attempt %s to retrieve requested market data %s."
-                % ((t + 1), ','.join(req_atts)))
+                             % ((t + 1), ','.join(req_atts)))
             tickerid = ib.start_getting_IB_market_data(
                 ibcontract, snapshot=True)
             time.sleep((t + 1) * interval)
@@ -76,7 +95,7 @@ class Strategy(object):
                 tickerid, timeout=5)
             df_mkt_data = market_data.as_pdDataFrame()
             values = self._return_attributes_from_market_data(
-                        req_atts, df_mkt_data)
+                req_atts, df_mkt_data)
 
             for val in values:
                 if pd.isna(val):
@@ -84,12 +103,13 @@ class Strategy(object):
                     break
 
             if attributes_found:
-                #self.logger.info("Valid market data attributes found "
+                # self.logger.info("Valid market data attributes found "
                 #    "for %s: %f, %f" % (tickerid, prices[0], prices[1]))
                 self.logger.info("Valid market data attributes '%s' "
-                    "found: %s" % (','.join(req_atts),
-                    ','.join([str(v) for v in values])))
+                                 "found: %s" % (','.join(req_atts),
+                                                ','.join([str(v) for v in values])))
                 return values
+
 
 class TFS(Strategy):
     def eod_data(self, ib=None, portfolio_list=None, tfs_settings=None,

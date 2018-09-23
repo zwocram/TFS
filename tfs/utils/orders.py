@@ -60,13 +60,20 @@ class OrderSamples:
     #/ Products: BOND, CFD, EFP, CASH, FUND, FUT, FOP, OPT, STK, WAR
     </summary>"""
     @staticmethod
-    def MarketOrder(action: str, quantity: float):
+    def MarketOrder(action: str, quantity: float, adaptive=False,
+                    priority="Normal"):
 
         #! [market]
         order = Order()
         order.action = action
         order.orderType = "MKT"
         order.totalQuantity = quantity
+
+        if adaptive:
+            order.algoStrategy = "Adaptive"
+            order.algoParams = []
+            order.algoParams.append(TagValue("adaptivePriority", priority))
+
         #! [market]
         return order
 
@@ -351,7 +358,8 @@ class OrderSamples:
     #/ Products: BOND, CFD, CASH, FUT, FOP, OPT, STK, WAR
     </summary>"""
     @staticmethod
-    def LimitOrder(action: str, quantity: float, limitPrice: float, adaptive=False, priority="Normal"):
+    def LimitOrder(action: str, quantity: float, limitPrice: float,
+                   adaptive=False, priority="Normal"):
         """
         priority values: Urgent, Normal, Patient
         """

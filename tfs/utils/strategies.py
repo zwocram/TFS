@@ -240,12 +240,12 @@ class TFS(Strategy):
 
     def _calc_nday_high(self, period, df):
         """Calculate N day high excluding today prices"""
-        nday_high = df[-period:].high.max()
+        nday_high = df[-period-1:-1].high.max()
         return float("{0:.4f}".format(nday_high))
 
     def _calc_nday_low(self, period, df):
         """Calculate N day low excluding today prices"""
-        nday_low = df[-period:].low.min()
+        nday_low = df[-period-1:-1].low.min()
         return float("{0:.4f}".format(nday_low))
 
     def _calc_today_open(self, df):

@@ -7,4 +7,5 @@ tfs/db/db.py
 tfs/db/tfs.db
 tfs/correlations/us.csv
 tfs/trendfollowing.py
-tfs/ibapi/*
+tfs/ibapi
+tfs/.DS_Store

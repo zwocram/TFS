@@ -1,33 +1,22 @@
-import itertools
-import math
-import networkx as nx
-import numpy as np
+from ib_insync import *
+import quandl
+from brokers.broker import (IBBroker,
+                            QuandlBroker)
 
 # new comment
 import configparser
 import pdb
-import sys
 import logging
-import decimal
 from optparse import OptionParser
-import pandas as pd
-# from datetime import datetime, time
-import datetime
-import time
-from utils import futures
 
-from utils.strategies import TFS, Unit
 from utils.correlations import Correlations
-from db.database import Database
-
-from ib import ib
-from ibapi.contract import Contract
+from utils.corrutil import CorrelationUtils
 
 MAX_DAYS_HISTORY = '150 D'
 NR_LEAST_CORRELATED_ITEMS = 3
 
-if __name__ == '__main__':
 
+def calc():
     # parse arguments
     parser = OptionParser()
     parser.add_option("-i", "--import_correlations", dest="import_corr",
@@ -35,12 +24,21 @@ if __name__ == '__main__':
     parser.add_option("-g", "--correlation_group", dest="corr_group",
                       help="Group in settings file that contains the "
                       " instruments.")
+    parser.add_option("-f", "--fx_conv", action="store_true", default=False,
+                      dest="fx_conv", help="Indicates whether to convert"
+                      " time series to native currency.")
+    parser.add_option("-d", "--dimension", dest="corr_dimension", default=4,
+                      help="Sets the dimension of the correlation "
+                      " submatrix.")
     (options, args) = parser.parse_args()
     import_corr = options.import_corr
     corr_group = options.corr_group
+    fx_conv = options.fx_conv
+    max_correlated_items = int(options.corr_dimension)
 
     corr_util = Correlations()
 
+<<<<<<< HEAD
     if import_corr is not None:
         df_corr = pd.read_csv(import_corr, index_col=['Unnamed: 0'],
                               na_values=[" ", "  ", " ", ""])
@@ -112,81 +110,47 @@ if __name__ == '__main__':
                 # print(corr_df)
 
         df_corr = corr_df.corr().abs()
+=======
+    # set up logging
+    logging.basicConfig(format='%(levelname)s %(asctime)s: %(message)s',
+                        filename='logs/log.log',
+                        filemode='w', level=logging.INFO)
+    logging.warning('loggin created')
 
-    df_corr_clean = corr_util.clean_correlation_matrix(df_corr)
-    nr_columns = df_corr_clean.shape[1]
-    print('The cleaned correlation matrix:\n')
-    print(df_corr_clean)
-    print('The correlation matrix:\n')
-    print(df_corr)
-    print('The actual time series:\n')
-    print(corr_df)
-    input('Above you see the cleaned and raw correlation matrix of'
-          ' the requested instruments. Press enter to continue or'
-          ' CTRL+C to quit.')
+    # read config file
+    config = configparser.ConfigParser()
+    config.read('config/settings.cfg')
 
-    # Create new graph
-    G = nx.Graph()
+    section = [i[1] for i in config.items() if i[0] == corr_group][0]
+    if "IB_" in corr_group:
+        ib_broker = IBBroker()
+        all_data = ib_broker.get_historical_data(section)
+    elif "QUANDL_" in corr_group:
+        quandl_broker = QuandlBroker()
+        all_data = quandl_broker.get_historical_data(section, fx_conv)
 
-    # Each node represents a dimension
-    node_range = range(0, nr_columns, 1)
-    G.add_nodes_from(node_range)
+    corr_utils = CorrelationUtils()
+    nr_uncorr_items = min(max_correlated_items, all_data.columns.size)
 
-    print('creating nodes and their dependencies...')
-    for n in node_range:
-        sub_range = node_range[n + 1:]
-        item_list = []
-        for s in sub_range:
-            # print(n, s, df_corr.iloc[n, s])
-            node_connection = (n, s, df_corr_clean.iloc[n, s])
-            item_list.append(node_connection)
-        # print(item_list)
-        G.add_weighted_edges_from(item_list)
+    sub_corr = corr_utils.least_correlated_sub_matrix_by_approx(
+        all_data.corr().abs(), max_dimension=nr_uncorr_items)
+    sub_corr.columns = [''] * sub_corr.columns.size
+    print(sub_corr.round(decimals=3))
 
-    nodes = set(G.nodes())
-    t1 = datetime.datetime.now()
-    print('calculating all combinations')
+    sub_corr_test = corr_utils.least_correlated_sub_matrix_by_simu(
+        all_data.corr().abs(),
+        max_dimension=nr_uncorr_items,
+        nr_trials=100000,
+        corr_type="least")
+    sub_corr_test.columns = [''] * sub_corr_test.columns.size
+    print(sub_corr_test.round(decimals=3))
 
-    if NR_LEAST_CORRELATED_ITEMS > 0:
-        nr_least_correlated_items = NR_LEAST_CORRELATED_ITEMS
-    else:
-        nr_least_correlated_items = math.floor(nr_columns / 3.)
-        if nr_least_correlated_items == 0:
-            nr_least_correlated_items += 1
+    sub_corr_opt = corr_utils.least_correlated_sub_matrix_by_optimization(
+        all_data.corr().abs(), max_dimension=nr_uncorr_items)
+    sub_corr_opt.columns = [''] * sub_corr_opt.columns.size
+    print(sub_corr_opt.round(decimals=3))
+>>>>>>> dev_macmini
 
-    combs = set(itertools.combinations(nodes, nr_least_correlated_items))
-    t2 = datetime.datetime.now()
-    print('Found {0} combinations in {1} seconds.'.format(len(combs),
-                                                          (t2 - t1).seconds))
-    sumList = []
 
-    print('analyzing all combinations...')
-    t3 = datetime.datetime.now()
-    for comb in combs:
-        S = G.subgraph(list(comb))
-        sum = 0
-        for edge in S.edges(data=True):
-            sum += edge[2]['weight']
-        sumList.append((sum, comb))
-    t4 = datetime.datetime.now()
-    print('Analyzed all combinations in {0}'.format((t4 - t3).seconds))
-
-    sorted = sorted(sumList, key=lambda tup: tup[0])
-
-    print('the least correlated items:\n')
-    best_node = list(sorted[0][1])
-    print(df_corr_clean.iloc[best_node, best_node])
-
-    for i in range(1, 10):
-        totalWeight = sorted[i][0]
-        nodes = list(sorted[i][1])
-        nodes.sort()
-        out = str(i) + ": " + str(totalWeight) + "," + str(nodes)
-        print(out)
-
-    S = G.subgraph(range(0, nr_least_correlated_items, 1))
-    sum = 0
-    for edge in S.edges(data=True):
-        sum += edge[2]['weight']
-
-    sys.exit()
+if __name__ == '__main__':
+    calc()

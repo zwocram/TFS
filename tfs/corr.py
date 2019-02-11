@@ -38,79 +38,6 @@ def calc():
 
     corr_util = Correlations()
 
-<<<<<<< HEAD
-    if import_corr is not None:
-        df_corr = pd.read_csv(import_corr, index_col=['Unnamed: 0'],
-                              na_values=[" ", "  ", " ", ""])
-        df_corr = corr_util.fill_upper_triangle(df_corr)
-        df_corr = df_corr.abs()
-        # sys.exit()
-        # df_corr = df.drop(columns=['Unnamed: 0'])
-        nr_columns = df_corr.shape[1]
-        # df_corr = df_corr.corr().abs()
-    else:
-        try:
-            app = ib.IB("127.0.0.1", 4011, 10)
-        except AttributeError as exp:
-            print("Could not connect to the TWS API application.")
-            sys.exit()
-
-        # set up logging
-        logging.basicConfig(format='%(levelname)s %(asctime)s: %(message)s',
-                            filename='logs/log.log',
-                            filemode='w', level=logging.INFO)
-        logging.warning('login created')
-
-        # read config file
-        config = configparser.ConfigParser()
-        config.read('config/settings.cfg')
-
-        if corr_group is not None:
-            instrument_list = config.items(corr_group)
-        else:
-            instrument_list = config.items('correlation_set')
-
-        corr_df = pd.DataFrame()
-        first_instrument = False
-        nr_instruments = len(instrument_list)
-
-        for p in instrument_list:
-            print(p)
-            identifier = p[0].upper()
-
-            exchange = p[1].split(',')[1].lstrip()
-            sec_type = p[1].split(',')[2].lstrip()
-            currency = p[1].split(',')[3].lstrip().upper()
-            ticker = p[1].split(',')[4].lstrip().upper()
-
-            ibcontract = Contract()
-            ibcontract.secType = sec_type
-            ibcontract.symbol = ticker
-            ibcontract.exchange = exchange
-            ibcontract.currency = currency
-            print('processing', identifier)
-
-            resolved_ibcontract = app.resolve_ib_contract(ibcontract)
-            historic_data = app.get_IB_historical_data(
-                resolved_ibcontract,
-                duration=MAX_DAYS_HISTORY)
-
-            if historic_data is not None:
-                df = pd.DataFrame(historic_data,
-                                  columns=['date', 'open', 'high',
-                                           'low', identifier, 'volume'])
-                df = df.set_index('date')
-                df = df.drop(columns=['open', 'high', 'low', 'volume'])
-                df = corr_util.calc_returns(df, identifier)
-                if first_instrument is False:
-                    first_instrument = True
-                    corr_df = df
-                else:
-                    corr_df = corr_df.join(df)
-                # print(corr_df)
-
-        df_corr = corr_df.corr().abs()
-=======
     # set up logging
     logging.basicConfig(format='%(levelname)s %(asctime)s: %(message)s',
                         filename='logs/log.log',
@@ -149,7 +76,6 @@ def calc():
         all_data.corr().abs(), max_dimension=nr_uncorr_items)
     sub_corr_opt.columns = [''] * sub_corr_opt.columns.size
     print(sub_corr_opt.round(decimals=3))
->>>>>>> dev_macmini
 
 
 if __name__ == '__main__':

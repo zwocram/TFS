@@ -66,7 +66,8 @@ def calc():
     sub_corr_test = corr_utils.least_correlated_sub_matrix_by_simu(
         all_data.corr().abs(),
         max_dimension=nr_uncorr_items,
-        nr_trials=100000)
+        nr_trials=100000,
+        corr_type="least")
     sub_corr_test.columns = [''] * sub_corr_test.columns.size
     print(sub_corr_test.round(decimals=3))
 

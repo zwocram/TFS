@@ -8,6 +8,8 @@ from scipy.optimize import Bounds
 from scipy.optimize import LinearConstraint
 from scipy.optimize import minimize
 
+import pdb
+
 
 class CorrelationUtils(object):
     """
@@ -25,7 +27,8 @@ class CorrelationUtils(object):
         return corr_matrix
 
     def least_correlated_sub_matrix_by_simu(self, corr_matrix,
-                                            max_dimension, nr_trials=50000):
+                                            max_dimension, nr_trials=50000,
+                                            corr_type="least"):
         dim_matrix = corr_matrix.columns.size
         results = []
         for s in range(nr_trials):
@@ -41,8 +44,8 @@ class CorrelationUtils(object):
 
         # process results
         values = [r[0] for r in results]
-        min_value = min(values)
-        min_value_index = values.index(min(values))
+        min_value = min(values) if corr_type == "least" else max(values)
+        min_value_index = values.index(min_value)
         min_value_vector = results[min_value_index][1]
         uncorr_indices = [i for i, x in enumerate(min_value_vector) if x == 1]
         submatrix = corr_matrix.iloc[uncorr_indices, uncorr_indices]

@@ -3,7 +3,10 @@ import quandl
 from abc import ABC, abstractmethod
 
 import pandas as pd
+import numpy as np
 import datetime
+
+import pdb
 
 
 class NoValidStartDate(Exception):
@@ -39,6 +42,52 @@ class Broker(ABC):
     @abstractmethod
     def get_historical_data(self):
         pass
+
+    def calc_returns(self, df):
+        """
+        calculate returns for columns in DataFrame
+        """
+
+        for c in df.columns:
+            df[c] = df[c] / df[c].shift(-1) - 1
+
+        return df
+
+    def get_close_prices(self, time_series, to_keep, names):
+        """
+        Strip all columns from historical data, except
+        the to_keep column
+
+        :param time_series: list of dataframes with hist_data
+        :param to_keep: the column to keep
+        """
+
+        def _delete_rest(df, to_keep):
+            """
+            Do some filtering on passed dataframe
+            and delete all columns except to_keep
+            """
+
+            if 0 in df.values:
+                df = df.replace(0, np.nan)
+            df = df.fillna(method='ffill')
+            df.columns = df.columns.str.lower()
+            if 'settle' in df.columns:
+                df = df.rename(columns={'settle': 'close'})
+
+            to_keep = [to_keep]
+            to_delete = [c for c in df.columns if c not in to_keep]
+
+            df = df.drop(columns=to_delete)
+
+            return df
+
+        series = [_delete_rest(df, to_keep) for df in time_series]
+        series = pd.concat(series, axis=1)
+        series = series.fillna(method='ffill')
+        series.columns = names
+
+        return series
 
 
 class IBBroker(Broker):
@@ -76,7 +125,7 @@ class IBBroker(Broker):
                 currency=currency
             )
 
-    def get_historical_data(self, section):
+    def get_historical_data(self, section, *args):
 
         self._connect()
         contract_defs = [self._det_contract(s) for s in section.items()]
@@ -89,7 +138,7 @@ class IBBroker(Broker):
         time_series = [self.ib.reqHistoricalData(
             contract,
             endDateTime='',
-            durationStr='120 D',
+            durationStr='240 D',
             barSizeSetting='1 day',
             whatToShow='MIDPOINT' if contract.secType == 'CASH' else 'TRADES',
             useRTH=True) for contract in contracts]
@@ -97,19 +146,19 @@ class IBBroker(Broker):
         self._disconnect()
 
         try:
-            series = [util.df(bars).set_index('date')['close']
+            series = [util.df(bars).set_index('date')
                       for bars in time_series]
-            all_data = pd.concat(series, axis=1)
-            all_data.columns = names
+            #series_df = pd.concat(series, axis=1)
+            #series_df.columns = names
         except Exception as e:
             print("Error converting IB time series to dataframes."
                   " Check the logs, there might be a permission error for a"
                   " particular instrument.")
 
-        return all_data
+        return series
 
 
-class QuandlBroker(object):
+class QuandlBroker(Broker):
 
     api_key = "xyfvxwSv8i1F5gyerDt_"
     curr_collection = pd.DataFrame()
@@ -128,10 +177,8 @@ class QuandlBroker(object):
             end_date=end_date.strftime(date_format),
             transform=transform
         )
-        if 'Settle' in data.columns:
-            return data['Settle']
-        elif 'Close' in data.columns:
-            return data['Close']
+
+        return data
 
     def _convert_series(self, currency, result,
                         start_date, end_date):
@@ -155,7 +202,8 @@ class QuandlBroker(object):
                   currencies=None,
                   start_date=None,
                   end_date=None,
-                  fx_conv=False):
+                  fx_conv=False,
+                  rdiff=False):
 
         partial_data = []
         for code in instrument_ids:
@@ -169,7 +217,8 @@ class QuandlBroker(object):
                             currency, result, start_date, end_date)
             else:
                 result = self._get_hist_time_series(
-                    code, start_date, end_date, transform="rdiff")
+                    code, start_date, end_date,
+                    transform="rdiff" if rdiff else "")
 
             partial_data.append(result)
 
@@ -179,25 +228,25 @@ class QuandlBroker(object):
 
         return all_data
 
-    def get_historical_data(self, section, fx_conv):
+    def get_historical_data(self, section, fx_conv=False, rdiff=False):
 
-        q_codes = [s[0].upper() for s in section.items()]
+        q_tickers = [s[0].upper() for s in section.items()]
         col_names = [s[1].split(',')[0].strip() for s in section.items()]
         currencies = [s[1].split(',')[1].strip() for s in section.items()]
 
-        date_utils = DateUtils()
-        start_date = date_utils.prev_months(
-            datetime.datetime.now().date(), months=6)
-        if start_date is None:
-            raise NoValidStartDate("choose 12 or less months")
+        end_date = datetime.datetime.now().date()
+        start_date = end_date + datetime.timedelta(days=-240)
 
-        end_date = datetime.date(
-            datetime.datetime.now().year,
-            datetime.datetime.now().month,
-            1)
+        series = [self._get_hist_time_series(ticker,
+                                             start_date,
+                                             end_date,
+                                             transform="")
+                  for ticker in q_tickers]
 
+        """
         all_data = self._get_data(
-            q_codes, col_names, currencies,
-            start_date, end_date, fx_conv=fx_conv)
+            q_t, col_names, currencies,
+            start_date, end_date, fx_conv=fx_conv, rdiff=rdiff)
+        """
 
-        return all_data
+        return series

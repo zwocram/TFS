@@ -1,3 +1,8 @@
+from ib_insync import *
+import quandl
+from brokers.broker import (IBBroker,
+                            QuandlBroker)
+
 import configparser
 import pdb
 import sys
@@ -14,12 +19,26 @@ from utils.strategies import TFS, Unit
 from utils.driver import Driver
 from db.database import Database
 
-from ib import ib
-from ibapi.contract import Contract
-
 from config import tfslog
 
 EOD_TIME = datetime.time(22, 0)
+
+
+def get_hist_time_series(portfolio_group_name,
+                         config_file_section):
+
+    col_names = [s[1].split(',')[0].strip()
+                 for s in config_file_section.items()]
+    if portfolio_group_name == "portfolio_IB":
+        broker = IBBroker()
+    elif portfolio_group_name == "portfolio_QUANDL":
+        broker = QuandlBroker()
+
+    time_series = broker.get_historical_data(config_file_section)
+    time_series_dict = dict(zip(col_names, time_series))
+
+    return time_series_dict
+
 
 if __name__ == '__main__':
     # Check that the port is the same as on the Gateway
@@ -65,17 +84,9 @@ if __name__ == '__main__':
     eod = options.eod
     test_mode = options.test
 
-    try:
-        app = ib.IB("127.0.0.1", 4011, 5192)  # use master id
-    except AttributeError as exp:
-        print("Could not connect to the TWS API application.")
-        sys.exit()
-
     db = Database()
     tfs_strat = TFS()
     driver = Driver()
-
-    current_time = app.get_time()
 
     minute_interval = 5
     second_interval = 5
@@ -83,11 +94,7 @@ if __name__ == '__main__':
 
     print("Waiting till markets are closed.")
 
-    """ONLY EXECUTE BELOW CODE IF TESTING
-    temp_time = datetime.datetime.now().time()
-    EOD_TIME = datetime.time(temp_time.hour, temp_time.minute + 1)
-    print(EOD_TIME)
-    """
+    portfolio_sections = ['portfolio_IB', 'portfolio_QUANDL']
 
     while(True):
         time.sleep(0.2)  # prevent the CPU from going wild
@@ -95,18 +102,90 @@ if __name__ == '__main__':
         date_today_iso = datetime.datetime.now().date().isoformat()
 
         if (curr_time > EOD_TIME and not eod_job_started) or test_mode:
-            app.init_error()
 
             print("Starting end of day process at {0}."
                   "".format(datetime.datetime.now().time()))
             eod_job_started = True
 
             # retrieve account data
+            """
             account_info = driver.get_account_data(app)
             if account_info is not None:
                 buying_power = account_info[0]
                 account_size = account_info[1]
+            """
 
+            def _format_output(vals):
+                """
+                use ANSI code like:
+                    red_white = '0;37;41'
+                    green_black = '0;30;42'
+                    color_string_1 += '\x1b[%sm %s \x1b[0m' \
+                        % (green_black, '%.4f' % D120_min)
+                """
+                new_vals = vals
+                # pdb.set_trace()
+                close = vals.loc[pd.IndexSlice[:, ['close']]][0]
+                D120_min = vals.loc[pd.IndexSlice[:, ['D120-']]][0]
+                D120_max = vals.loc[pd.IndexSlice[:, ['D120+']]][0]
+                D20_max = vals.loc[pd.IndexSlice[:, ['D20+']]][0]
+                D20_min = vals.loc[pd.IndexSlice[:, ['D20-']]][0]
+                D55_max = vals.loc[pd.IndexSlice[:, ['D55+']]][0]
+                D55_min = vals.loc[pd.IndexSlice[:, ['D55-']]][0]
+
+                def spot_breakouts(max_ind_name, min_ind_name,
+                                   max_ind_val, min_ind_val, close_price):
+                    """
+                    based on donchian high and low levels
+                    determine if breakout has occurred and if
+                    yes, reformat the entry
+                    """
+
+                    if close_price > max_ind_val:
+                        new_vals.loc[pd.IndexSlice[:, [max_ind_name]]] = \
+                            chr(187) + '%.4f' % max_ind_val + chr(171)
+                    elif close_price < min_ind_val:
+                        new_vals.loc[pd.IndexSlice[:, [min_ind_name]]] = \
+                            chr(187) + '%.4f' % min_ind_val + chr(171)
+
+                    return new_vals
+
+                if close > D120_max:
+                    new_vals.loc[pd.IndexSlice[:, ['D120+']]] = \
+                        chr(187) + '%.4f' % D120_max + chr(171)
+                elif close < D120_min:
+                    new_vals.loc[pd.IndexSlice[:, ['D120-']]] = \
+                        chr(187) + '%.4f' % D120_min + chr(171)
+
+                if close > D20_max:
+                    new_vals.loc[pd.IndexSlice[:, ['D20+']]] = \
+                        chr(187) + '%.4f' % D20_max + chr(171)
+                elif close < D20_min:
+                    new_vals.loc[pd.IndexSlice[:, ['D20-']]] = \
+                        chr(187) + '%.4f' % D20_min + chr(171)
+
+                if close > D55_max:
+                    new_vals.loc[pd.IndexSlice[:, ['D55+']]] = \
+                        chr(187) + '%.4f' % D55_max + chr(171)
+                elif close < D55_min:
+                    new_vals.loc[pd.IndexSlice[:, ['D55-']]] = \
+                        chr(187) + '%.4f' % D55_min + chr(171)
+
+                return new_vals
+
+            time_series = [get_hist_time_series(group_name,
+                                                [i[1] for i in config.items()
+                                                 if i[0] == group_name][0])
+                           for group_name in portfolio_sections]
+            time_series_merged = {ticker: data
+                                  for dict in time_series
+                                  for ticker, data in dict.items()}
+            cleaned_data = tfs_strat.clean_up_data(time_series_merged)
+            cleaned_data = cleaned_data.apply(_format_output, axis=1)
+
+            print(cleaned_data)
+
+            pdb.set_trace()
             # retrieve current exchange rate data
             hist_data = []
             for instr in config.items('forex'):

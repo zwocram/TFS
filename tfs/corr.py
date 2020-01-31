@@ -7,13 +7,36 @@ from brokers.broker import (IBBroker,
 import configparser
 import pdb
 import logging
+import math
 from optparse import OptionParser
 
 from utils.correlations import Correlations
 from utils.corrutil import CorrelationUtils
 
+from decimal import Decimal
+
 MAX_DAYS_HISTORY = '150 D'
 NR_LEAST_CORRELATED_ITEMS = 3
+PORTFOLIO_SIZE = 21
+
+
+def calc_mkt_shares(markets_dist=None, markets_available=None,
+                    markets_count=None, portf_size=20):
+
+    # calculate number of items for each market that
+    # has to be present in the portfolio
+    theo_market_shares = [(i, math.floor(portf_size * Decimal(
+        [m[1] for m in markets_dist if m[0] == i][0])))
+        for i in markets_available]
+
+    # if optimal market share < # market elements ==> take optimal
+    # else divide market elements by 2 and floor it.
+    markets_zipped = list(zip(markets_count, theo_market_shares))
+    result = [(z[0][0], z[1][1])
+              if z[0][1] > z[1][1] else (z[0][0], math.floor(z[0][1] / 2))
+              for z in markets_zipped]
+
+    return result
 
 
 def calc():
@@ -48,7 +71,9 @@ def calc():
     config = configparser.ConfigParser()
     config.read('config/settings.cfg')
 
+    # get markets distribution
     section = [i[1] for i in config.items() if i[0] == corr_group][0]
+
     if "IB_" in corr_group:
         ib_broker = IBBroker()
         all_data = ib_broker.get_historical_data(section)
@@ -56,8 +81,32 @@ def calc():
         quandl_broker = QuandlBroker()
         all_data = quandl_broker.get_historical_data(section, fx_conv)
 
+    markets_dist = config.items("markets_distribution")
+    if "ALL" in corr_group:
+        resulting_market_set = all_data.corr().columns.tolist()
+        markets_from_config = [(s[1].split(',')[0].strip(),
+                                s[1].split(',')[2].strip())
+                               for s in section.items()]
+        present_markets = [m[1] for m in markets_from_config
+                           if m[0] in resulting_market_set]
+
+        unique_markets = list(dict.fromkeys(present_markets))
+        markets_count = [(m, present_markets.count(m)) for m in unique_markets]
+        markets_shares = calc_mkt_shares(markets_dist, unique_markets,
+                                         markets_count, PORTFOLIO_SIZE)
+
+        print(markets_count)
+        print(markets_shares)
+
     corr_utils = CorrelationUtils()
     nr_uncorr_items = min(max_correlated_items, all_data.columns.size)
+
+    sub_corr_opt = corr_utils.least_correlated_sub_matrix_by_optimization_grouped(
+        all_data.corr().abs(), max_dimension=markets_shares,
+        markets_count=markets_count)
+    sub_corr_opt.columns = [''] * sub_corr_opt.columns.size
+    print(sub_corr_opt.round(decimals=3))
+    pdb.set_trace()
 
     sub_corr = corr_utils.least_correlated_sub_matrix_by_approx(
         all_data.corr().abs(), max_dimension=nr_uncorr_items)

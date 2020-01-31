@@ -1,7 +1,6 @@
-tfs_env/*
+tfs_venv/*
 examples/*
 *pyc
-tfs/logs/*
 tfs/tfs.db
 tfs/db/db.py
 tfs/db/tfs.db

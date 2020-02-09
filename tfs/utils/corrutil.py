@@ -90,6 +90,41 @@ class CorrelationUtils(object):
 
         return corr_matrix.iloc[index_hits, index_hits]
 
+    def _create_start_end_index_markets(self, market_count):
+        """
+        Create start and end indices for identifying market
+        members in e.g. correlation matrices.
+
+        Based on a list of available asset classes and the
+        number of markets in those asset classes we create
+        indices with which we can identify those markets and
+        their members in a correlation matrix.
+
+        Parameters
+        ----------
+        market_count: list
+            each member in the list is a tuple.
+                first tuple member: asset class name
+                second tuple member: #markets in asset class
+
+        Returns
+        -------
+        market_index: list
+            each member of the list is a 2d tuple
+                1st element: start index of asset class range
+                2nd element: end index of asset class range
+
+        """
+
+        cum_markets_count = list(
+            itertools.accumulate([m[1] for m in market_count]))
+        dum_1 = [x-1 for x in cum_markets_count]
+        cum_markets_count.insert(0, 0)
+        dum_2 = cum_markets_count.pop()
+        market_index = list(zip(cum_markets_count, dum_1))
+
+        return market_index
+
     def least_correlated_sub_matrix_by_optimization_grouped(
             self, corr_matrix,
             max_dimension, markets_count):
@@ -98,12 +133,7 @@ class CorrelationUtils(object):
         nr_vars = corr_matrix.columns.size
 
         A_mat = np.zeros((len(max_dimension), nr_vars))
-        cum_markets_count = list(
-            itertools.accumulate([m[1] for m in markets_count]))
-        dum_1 = [x-1 for x in cum_markets_count]
-        cum_markets_count.insert(0, 0)
-        dum_2 = cum_markets_count.pop()
-        market_index = list(zip(cum_markets_count, dum_1))
+        market_index = self._create_start_end_index_markets(markets_count)
         for each in enumerate(market_index):
             A_mat[each[0], each[1][0]:each[1][1]+1] = 1
 
@@ -134,6 +164,4 @@ class CorrelationUtils(object):
 
             hits += index_hits
 
-        print(hits)
-        print(corr_matrix.iloc[hits, hits])
         return corr_matrix.iloc[hits, hits]

@@ -37,4 +37,4 @@ Installing TA-Lib on windows
 - go to https://www.lfd.uci.edu/~gohlke/pythonlibs/#ta-lib and download the whl file with the correct python number, e.g. for python 3.6 look for file name with cp36 in the name.
 - pip install <name of the whl file>, e.g. 'pip install TA_Lib-0.4.17-cp36-cp36m-win_amd64.whl'
 
-For overview of the available indicators go to http://tadoc.org/. For python examples go to https://mrjbq7.github.io/ta-lib/func.html
+For overview of the available indicators go to http://tadoc.org/. For python examples go to https://mrjbq7.github.io/ta-lib/doc_index.html

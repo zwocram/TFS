@@ -10,6 +10,8 @@ import talib
 from sqlalchemy import create_engine
 
 import pdb
+import sys
+import traceback
 
 
 def _get_engine():
@@ -69,31 +71,54 @@ def to_db(df):
 
 
 def add_ta(mkt_data):
+
+    days_10d = 11
+    days_1m = 23
+    days_3m = 68
+    days_6m = 134
+    days_12m = 262
     for df in mkt_data:
         df['PrevHigh'] = df['High'].shift(1)
         df['PrevLow'] = df['Low'].shift(1)
-        df['MA_10D'] = df['Adj Close'].rolling(window=10).mean()
-        df['MA_20D'] = df['Adj Close'].rolling(window=20).mean()
-        df['MA_50D'] = df['Adj Close'].rolling(window=50).mean()
-        df['MA_200D'] = df['Adj Close'].rolling(window=200).mean()
-        df['ATR14'] = talib.ATR(df['High'], df['Low'], df['Adj Close'], timeperiod=14)
-        df['ATR14_1'] = df['ATR14'].shift(1)
-        df['ATR14_PERC'] = df['ATR14'] / df['Adj Close']
+        df['PrevClose'] = df['Close'].shift(1)
+        df['Close_MIN2'] = df['Close'].shift(2)
+        df['Close_MIN3'] = df['Close'].shift(3)
+        df['Close_MIN4'] = df['Close'].shift(4)
+        df['Close_MIN5'] = df['Close'].shift(5)
+        df['MA_10D'] = df['Close'].rolling(window=10).mean()
+        df['MA_20D'] = df['Close'].rolling(window=20).mean()
+        df['MA_50D'] = df['Close'].rolling(window=50).mean()
+        df['MA_200D'] = df['Close'].rolling(window=200).mean()
+        df['ATR14'] = talib.ATR(df['High'], df['Low'], df['Close'], timeperiod=14)
+        df['ATR14_1'] = talib.ATR(df['PrevHigh'], df['PrevLow'],
+                                  df['PrevClose'], timeperiod=14)
+        df['ATR14_PERC'] = df['ATR14'] / df['Close']
         df['ATR14_PERC_1'] = df['ATR14_PERC'].shift(1)
-        df['ADX'] = talib.ADX(df['High'], df['Low'], df['Adj Close'], timeperiod=25)
-        df['MINUS_DM'] = talib.MINUS_DM(df['High'], df['Low'], timeperiod=10)
-        df['PLUS_DM'] = talib.PLUS_DM(df['High'], df['Low'], timeperiod=10)
-        df['HIGH_10D'] = talib.MAX(df['High'], timeperiod=10)
-        df['HIGH_1_10D'] = talib.MAX(df['PrevHigh'], timeperiod=10)
-        df['LOW_10D'] = talib.MIN(df['Low'], timeperiod=10)
-        df['LOW_1_10D'] = talib.MIN(df['PrevLow'], timeperiod=10)
-        df['change_1D'] = df['Adj Close'].pct_change(periods=1)
-        df['change_10D'] = df['Adj Close'].pct_change(periods=10)
-        df['change_1M'] = df['Adj Close'].pct_change(periods=20)
-        df['change_3M'] = df['Adj Close'].pct_change(periods=60)
-        df['change_6M'] = df['Adj Close'].pct_change(periods=120)
-        df['change_12M'] = df['Adj Close'].pct_change(periods=260)
-        df['RSI2'] = talib.MAX(df['Adj Close'], timeperiod=2)
+        df['ADX'] = talib.ADX(df['High'], df['Low'], df['Close'], timeperiod=14)
+        df['MINUS_DI'] = talib.MINUS_DI(df['High'], df['Low'], df['Close'], timeperiod=14)
+        df['PLUS_DI'] = talib.PLUS_DI(df['High'], df['Low'], df['Close'], timeperiod=14)
+        df['HIGH_10D'] = talib.MAX(df['High'], timeperiod=days_10d)
+        df['HIGH_1_10D'] = talib.MAX(df['PrevHigh'], timeperiod=days_10d)
+        df['LOW_1_10D'] = talib.MIN(df['PrevLow'], timeperiod=days_10d)
+        df['HIGH_1_1M'] = talib.MAX(df['PrevHigh'], timeperiod=days_1m)
+        df['LOW_1_1M'] = talib.MIN(df['PrevLow'], timeperiod=days_1m)
+        df['HIGH_1_3M'] = talib.MAX(df['PrevHigh'], timeperiod=days_3m)
+        df['LOW_1_3M'] = talib.MIN(df['PrevLow'], timeperiod=days_3m)
+        df['HIGH_1_6M'] = talib.MAX(df['PrevHigh'], timeperiod=days_6m)
+        df['LOW_1_6M'] = talib.MIN(df['PrevLow'], timeperiod=days_6m)
+        df['HIGH_1_12M'] = talib.MAX(df['PrevHigh'], timeperiod=days_12m)
+        df['LOW_1_12M'] = talib.MIN(df['PrevLow'], timeperiod=days_12m)
+        df['change_1D'] = df['Close'].pct_change(periods=1)
+        df['change_10D'] = df['Close'].pct_change(periods=10)
+        df['change_1M'] = df['Close'].pct_change(periods=22)
+        df['change_3M'] = df['Close'].pct_change(periods=66)
+        df['change_6M'] = df['Close'].pct_change(periods=132)
+        df['change_12M'] = df['Close'].pct_change(periods=260)
+        df['WILLR_52W'] = talib.WILLR(df['PrevHigh'], df['PrevLow'],
+                                      df['PrevClose'], timeperiod=260)
+        df['WILLR_10D'] = talib.WILLR(df['PrevHigh'], df['PrevLow'],
+                                      df['PrevClose'], timeperiod=10)
+        df['RSI2'] = talib.RSI(df['Close'], timeperiod=2)
 
     return mkt_data
 
@@ -106,7 +131,11 @@ def get_market_data(tickers):
     start = (dt.datetime.today() - yr_delta).date()
     end = dt.date.today()
 
-    df = [web.DataReader(t, 'yahoo', start, end) for t in tickers]
+    try:
+        df = [web.DataReader(t, 'yahoo', start, end) for t in tickers]
+    except KeyError as err:
+        print(err)
+
     for d in enumerate(df):
         d[1]['ticker'] = tickers[d[0]]
 
@@ -115,7 +144,18 @@ def get_market_data(tickers):
 
 if __name__ == "__main__":
 
-    tickers = ['SPY', 'QQQ', 'DIA', 'MDY', 'IWM', 'EFA', 'EPP', 'ILF', 'EEM', 'IEV']
+    tickers = ['SPY', 'QQQ', 'DIA', 'MDY', 'IWM', 'EFA', 'EPP', 'ILF', 'EEM',
+               'IEV', 'AAPL', 'AXP', 'BA', 'CAT', 'CSCO', 'CVX', 'DD', 'DIS',
+               'GE', 'GS', 'HD', 'IBM', 'INTC', 'JNJ', 'JPM', 'KO', 'MCD',
+               'MMM', 'MRK', 'MSFT', 'NKE', 'PFE', 'PG', 'TRV', 'UNH',
+               'UTX', 'V', 'VZ', 'WMT', 'XOM', 'DBA', 'DBC', 'DIA', 'EEB',
+               'EEM', 'EFA', 'EMB', 'EPP', 'EWA', 'EWJ', 'EWZ', 'FXI',
+               'GLD', 'IEV', 'ILF', 'IWM', 'IYR', 'MDY', 'QQQ',
+               'SHY', 'SPY', 'TLT', 'XLB', 'XLE', 'XLF', 'XLI', 'XLK',
+               'XLP', 'XLU', 'XLV', 'XLY'
+               ]
+    tickers = list(dict.fromkeys(tickers))  # make tickers unique
+    print(tickers)
     df_mkt = get_market_data(tickers)
     df_mkt = add_ta(df_mkt)
     to_db(df_mkt)

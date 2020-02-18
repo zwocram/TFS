@@ -94,9 +94,11 @@ def add_ta(mkt_data):
                                   df['PrevClose'], timeperiod=14)
         df['ATR14_PERC'] = df['ATR14'] / df['Close']
         df['ATR14_PERC_1'] = df['ATR14_PERC'].shift(1)
-        df['ADX'] = talib.ADX(df['High'], df['Low'], df['Close'], timeperiod=14)
-        df['MINUS_DI'] = talib.MINUS_DI(df['High'], df['Low'], df['Close'], timeperiod=14)
-        df['PLUS_DI'] = talib.PLUS_DI(df['High'], df['Low'], df['Close'], timeperiod=14)
+        df['ADX'] = talib.ADX(df['PrevHigh'], df['PrevLow'], df['PrevClose'], timeperiod=14)
+        df['MINUS_DI'] = talib.MINUS_DI(df['PrevHigh'], df['PrevLow'],
+                                        df['PrevClose'], timeperiod=14)
+        df['PLUS_DI'] = talib.PLUS_DI(df['PrevHigh'], df['PrevLow'],
+                                      df['PrevClose'], timeperiod=14)
         df['HIGH_10D'] = talib.MAX(df['High'], timeperiod=days_10d)
         df['HIGH_1_10D'] = talib.MAX(df['PrevHigh'], timeperiod=days_10d)
         df['LOW_1_10D'] = talib.MIN(df['PrevLow'], timeperiod=days_10d)

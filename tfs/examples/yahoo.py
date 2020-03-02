@@ -1,14 +1,25 @@
 from yahoo_fin.stock_info import *
+from yahoo_fin import options
+
+import pandas_datareader.data as web
+import pandas as pd
+
 
 import datetime as dt
-from datetime import date
+from datetime import timedelta
 
 
-etf_data = get_data('XLF', start_date='12/01/2019')
-print(etf_data)
+yr_delta = timedelta(days=545)
+start = dt.datetime.today()-yr_delta
 
-tday = date.today()
-delta_days = dt.timedelta(days=180)
+start = (dt.datetime.today() - yr_delta).date()
+end = dt.date.today()
 
-print("today: ", tday)
-print("history: ", tday - delta_days)
+ticker = 'EURUSD=X'
+try:
+    df = web.DataReader(ticker, 'yahoo', start, end)
+except KeyError as err:
+    print(err)
+
+
+print(df)

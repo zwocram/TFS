@@ -1,13 +1,16 @@
 from ib_insync import *
 import quandl
 from brokers.broker import (IBBroker,
-                            QuandlBroker)
+                            QuandlBroker,
+                            Yahoo)
 
 # new comment
+import copy
 import configparser
 import pdb
 import logging
 import math
+import pandas as pd
 from optparse import OptionParser
 
 from utils.correlations import Correlations
@@ -21,11 +24,11 @@ PORTFOLIO_SIZE = 21
 
 
 def calc_mkt_shares(markets_dist=None, markets_available=None,
-                    markets_count=None, portf_size=20):
+                    markets_count=None, portf_size=25):
 
     # calculate number of items for each market that
     # has to be present in the portfolio
-    theo_market_shares = [(i, math.floor(portf_size * Decimal(
+    theo_market_shares = [(i, round(portf_size * Decimal(
         [m[1] for m in markets_dist if m[0] == i][0])))
         for i in markets_available]
 
@@ -53,10 +56,15 @@ def calc():
     parser.add_option("-d", "--dimension", dest="corr_dimension", default=4,
                       help="Sets the dimension of the correlation "
                       " submatrix.")
+    parser.add_option("-c", "--categorize", action="store_true", default=True,
+                      dest="categorize", help="Indicates whether to group"
+                      " data based on e.g. asset class (energy, financial, etc)")
+
     (options, args) = parser.parse_args()
     import_corr = options.import_corr
     corr_group = options.corr_group
     fx_conv = options.fx_conv
+    bool_cat = options.categorize
     max_correlated_items = int(options.corr_dimension)
 
     corr_util = Correlations()
@@ -68,35 +76,55 @@ def calc():
     logging.warning('loggin created')
 
     # read config file
-    config = configparser.ConfigParser()
+    config = configparser.ConfigParser(delimiters=(':'))
     config.read('config/settings.cfg')
 
     # get markets distribution
     section = [i[1] for i in config.items() if i[0] == corr_group][0]
 
-    if "IB_" in corr_group:
-        ib_broker = IBBroker()
-        all_data = ib_broker.get_historical_data(section)
-    elif "QUANDL_" in corr_group:
-        quandl_broker = QuandlBroker()
-        all_data = quandl_broker.get_historical_data(section, fx_conv)
+    # get set of distinct data suppliers
+    data_suppliers = [s[1].split(',')[0].strip().lower()
+                      for s in section.items()]
+    data_suppliers = list(dict.fromkeys(data_suppliers))  # make unique
+
+    # get data
+    dataset = []
+
+    if 'quandl' in data_suppliers:
+        broker = QuandlBroker()
+        data_quandl = broker.get_historical_data(section, fx_conv)
+        dataset.append(data_quandl)
+
+    if 'yahoo' in data_suppliers:
+        broker = Yahoo()
+        data_yahoo = broker.get_historical_data(section)
+        dataset.append(data_yahoo)
+
+    all_data = pd.concat(dataset, axis=1)
 
     markets_dist = config.items("markets_distribution")
-    if "ALL" in corr_group:
-        resulting_market_set = all_data.corr().columns.tolist()
-        markets_from_config = [(s[1].split(',')[0].strip(),
-                                s[1].split(',')[2].strip())
-                               for s in section.items()]
-        present_markets = [m[1] for m in markets_from_config
-                           if m[0] in resulting_market_set]
 
-        unique_markets = list(dict.fromkeys(present_markets))
-        markets_count = [(m, present_markets.count(m)) for m in unique_markets]
+    if bool_cat:
+        market_set = all_data.corr().columns.tolist()
+        if len(market_set) < len(section):
+            print("WARNING: correlation matrix contains fewer items"
+                  " than config file.")
+            pdb.set_trace()
+        market_classes = [(s[1].split(',')[1].strip(),
+                           s[1].split(',')[3].strip())
+                          for s in section.items()]
+        available_markets = [m[1] for m in market_classes
+                             if m[0] in market_set]
+
+        unique_markets = list(dict.fromkeys(available_markets))
+        markets_count = [(m, available_markets.count(m))
+                         for m in unique_markets]
         markets_shares = calc_mkt_shares(markets_dist, unique_markets,
                                          markets_count, PORTFOLIO_SIZE)
 
         print(markets_count)
         print(markets_shares)
+        print(markets_dist)
 
     corr_utils = CorrelationUtils()
     nr_uncorr_items = min(max_correlated_items, all_data.columns.size)

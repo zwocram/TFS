@@ -3,6 +3,7 @@ import quandl
 from abc import ABC, abstractmethod
 
 import pandas as pd
+import pandas_datareader.data as web
 import datetime
 
 import pdb
@@ -181,11 +182,14 @@ class QuandlBroker(object):
 
         return all_data
 
-    def get_historical_data(self, section, fx_conv):
+    def get_historical_data(self, section, fx_conv, ds="quandl"):
 
-        q_codes = [s[0].upper() for s in section.items()]
-        col_names = [s[1].split(',')[0].strip() for s in section.items()]
-        currencies = [s[1].split(',')[1].strip() for s in section.items()]
+        tickers = [s[0].upper() for s in section.items()
+                   if s[1].split(',')[0].strip().lower() == ds]
+        col_names = [s[1].split(',')[1].strip() for s in section.items()
+                     if s[1].split(',')[0].strip().lower() == ds]
+        currencies = [s[1].split(',')[2].strip() for s in section.items()
+                      if s[1].split(',')[0].strip().lower() == ds]
 
         date_utils = DateUtils()
         start_date = date_utils.prev_months(
@@ -199,7 +203,41 @@ class QuandlBroker(object):
             1)
 
         all_data = self._get_data(
-            q_codes, col_names, currencies,
+            tickers, col_names, currencies,
             start_date, end_date, fx_conv=fx_conv)
 
-        return all_data
+        all_data_refined = all_data[all_data.index.dayofweek < 5]
+
+        return all_data_refined.fillna(method='ffill')
+
+
+class Yahoo(object):
+
+    def get_historical_data(self, section, ds="yahoo"):
+
+        tickers = [s[0].upper() for s in section.items()
+                   if s[1].split(',')[0].strip().lower() == ds]
+        descriptors = [s[1].split(',')[1].strip() for s in section.items()
+                       if s[1].split(',')[0].strip().lower() == ds]
+
+        date_utils = DateUtils()
+        start_date = date_utils.prev_months(
+            datetime.datetime.now().date(), months=6)
+        if start_date is None:
+            raise NoValidStartDate("choose 12 or less months")
+
+        end_date = datetime.date(
+            datetime.datetime.now().year,
+            datetime.datetime.now().month,
+            1)
+
+        try:
+            df = [web.DataReader(t, ds, start_date, end_date)['Close']
+                  for t in tickers]
+            df = pd.concat(df, axis=1)
+            df.columns = descriptors
+
+        except KeyError as err:
+            print(err)
+
+        return df.pct_change()

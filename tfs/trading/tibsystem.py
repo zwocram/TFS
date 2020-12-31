@@ -3,12 +3,20 @@ import numpy as np
 import pandas as pd
 import logging
 from sqlalchemy import create_engine
+from pytz import timezone
 
 from ib_insync import *
 
 
 import datetime
 import pdb
+
+EAST_TZ = timezone('US/Eastern')
+NL_TZ = timezone('Europe/Amsterdam')
+
+
+EOD_NY_TIME = datetime.time(16, 0)
+SOD_NY_TIME = datetime.time(9, 30)
 
 TIB_DB = 'sqlite:///tfs/db/tib.db'
 
@@ -17,6 +25,7 @@ AVG_DOLLAR_20D_SYS_2 = 25000000
 ATR_10_PERC_FLOOR_SYS3 = 0.05
 AVG_VOL_50D = 1000000
 
+FOREX_LIST = ['EURUSD']
 
 SYS_PRICE_CHECK_1 = 5
 SYS_PRICE_CHECK_2 = 1
@@ -52,27 +61,35 @@ log = logging.getLogger(__name__)
 class Utils:
 
     @staticmethod
-    def trade_to_df(trade):
+    def trades_to_df(trades):
 
         last_log_entry = None
+        last_log_message = None
+
         try:
-            last_log_entry = trade.log[-1].time
+            last_log_entry = [trade.log[-1].time
+                              if len(trade.log) > 0 else None
+                              for trade in trades]
+            last_log_message = [trade.log[-1].message
+                                if len(trade.log) > 0 else None
+                                for trade in trades]
         except IndexError:
             pass
 
         trade_df = pd.DataFrame(
-            {'TICKER': [trade.contract.symbol],
-             'CONTRACT_ID': [trade.contract.conId],
-             'ORDER_REF': [trade.order.orderRef],
-             'ORDER_ID': [trade.order.orderId],
-             'ACTION': [trade.order.action],
-             'QUANTITY': [trade.order.totalQuantity],
-             'ORDER_TYPE': [trade.order.orderType],
-             'LMT_PRICE': [trade.order.lmtPrice],
-             'ACCOUNT': [trade.order.account],
-             'STATUS': [trade.orderStatus.status],
-             'FILLED': [trade.orderStatus.filled],
-             'LAST_LOG': [last_log_entry]})
+            {'TICKER': [trade.contract.symbol for trade in trades],
+             'CONTRACT_ID': [trade.contract.conId for trade in trades],
+             'ORDER_REF': [trade.order.orderRef for trade in trades],
+             'ORDER_ID': [trade.order.orderId for trade in trades],
+             'ACTION': [trade.order.action for trade in trades],
+             'QUANTITY': [trade.order.totalQuantity for trade in trades],
+             'ORDER_TYPE': [trade.order.orderType for trade in trades],
+             'LMT_PRICE': [trade.order.lmtPrice for trade in trades],
+             'ACCOUNT': [trade.order.account for trade in trades],
+             'STATUS': [trade.orderStatus.status for trade in trades],
+             'FILLED': [trade.orderStatus.filled for trade in trades],
+             'LOG_MESSAGE': last_log_message,
+             'LAST_LOG': last_log_entry})
 
         return trade_df
 
@@ -90,7 +107,7 @@ class IBEventsHandling:
 
     def newOrderEvent(self, Trade):
         trade = Trade
-        print('new order: ', Utils.trade_to_df(trade))
+        # print('new order: ', Utils.trade_to_df(trade))
 
     def openOrderEvent(self, Trade):
         pass
@@ -100,7 +117,7 @@ class IBEventsHandling:
 
     def orderStatusEvent(self, Trade):
         trade = Trade
-        print(Utils.trade_to_df(trade))
+        # print(Utils.trade_to_df(trade))
 
     def positionEvent(self, Trade):
         pass
@@ -124,7 +141,21 @@ class Centurion:
             ib.connect('127.0.0.1', 4002, clientId=15)
             ibe = IBEventsHandling(ib)
 
-            portfolio = ib.portfolio()
+            # get account value
+            account_value = [v.value for v in ib.accountValues()
+                             if v.tag == 'NetLiquidationByCurrency'
+                             and v.currency == 'BASE'][0]
+
+            forex_contracts = [Forex(f) for f in FOREX_LIST]
+            forex_close_prices = [(contract.symbol, ib.reqHistoricalData(
+                contract, endDateTime='', durationStr='3 D',
+                barSizeSetting='1 day', whatToShow='MIDPOINT',
+                useRTH=True, formatDate=1, keepUpToDate=False)[-1].close)
+                for contract in forex_contracts]
+
+            print('account value: ', account_value)
+            print('forex data: ', forex_close_prices)
+            # portfolio = ib.portfolio()
 
         except ConnectionRefusedError:
             print("Cannot connect to IB but let's continue")
@@ -142,13 +173,16 @@ class Centurion:
                 result_set = system.check_shortability(result_set.copy())
 
             result_set = system.check_portfolio_for_ticker(result_set.copy())
-            trade = system.placeOrder(result_set)
+            system.placeOrder(result_set)
             # https://stackoverflow.com/questions/30045086/pandas-left-join-and-update-existing-column
             # print(pd.merge(result_set, open_positions, on='TICKER', how='left'))
             # result_set = system.check_portfolio_for_position(result_set.copy())
             # df.insert(0, 'New_ID', range(880, 880 + len(df)))
 
             print(result_set)
+
+        pd.set_option("max_rows", None)
+        print(Utils.trades_to_df(ib.trades()))
 
         if ib.isConnected():
             # redirect to event handlers
@@ -161,16 +195,41 @@ class Centurion:
 
             # HANDLE THE WAITING
             # ib.setTimeout(120)
-            right_now = datetime.datetime.now()
-            ml = datetime.timedelta(minutes=2)
+            current_year = datetime.date.today().year
+            current_month = datetime.date.today().month
+            current_day = datetime.date.today().day
 
-            for t in ib.timeRange(right_now, right_now + ml, 60):
-                print('we are in time period', t)
-                for trade in ib.trades():
-                    print(Utils.trade_to_df(trade))
-                if t == right_now + ml:
-                    ib.disconnect()
-                    exit()
+            us_time = EAST_TZ.localize(datetime.datetime(
+                current_year,
+                current_month,
+                current_day, 16, 0, 0))
+
+            nl_time = us_time.astimezone(NL_TZ).time()
+
+            # for t in ib.timeRange(right_now, right_now + ml, 60):
+            print('waiting until', nl_time)
+            if ib.waitUntil(nl_time):
+                ib.sleep(10)  # make sure trading session is finished
+                trades_df = Utils.trades_to_df(ib.trades())
+                print('NEW CLOSING TRADES:')
+                print(trades_df.query('ORDER_REF.str.contains("-C") & '
+                                      'STATUS != "Cancelled"'))
+
+                print('NEW OPENING TRADES:')
+                print(trades_df.query('ORDER_REF.str.contains("-C") == False'
+                                      ' & STATUS != "Cancelled"'))
+
+                print('FILLED CLOSING TRADES:')
+                print(trades_df.query('(ORDER_REF.str.contains("-C")) & '
+                                      '(STATUS == "Filled")'))
+
+                print('FILLED OPENING TRADES:')
+                print(trades_df.query('(ORDER_REF.str.contains("-C") == False) '
+                                      '& (STATUS == "Filled")'))
+
+                ib.disconnect()
+                pdb.set_trace()
+                exit()
 
             """
             right_now = datetime.datetime.now()
@@ -226,8 +285,7 @@ class System:
                 positions_info = pd.merge(
                     ticker_list, df_positions[['TICKER', 'STATUS']],
                     on='TICKER', how='left')
-                positions_info['IN_PORT'] = \
-                    positions_info['STATUS'].apply(
+                positions_info['IN_PORT'] = positions_info['STATUS'].apply(
                     lambda x: True if x == 'open' else False)
                 positions_info.drop('STATUS', axis=1, inplace=True)
             else:
@@ -348,7 +406,7 @@ class System:
         pos_size = min(pos_max_exposure, pos_risk_size)
         return pos_size
 
-    def placeOrder(self, ticker_list, account_value=37401, eur_usd=1.2187):
+    def placeOrder(self, ticker_list, account_value=36800, eur_usd=1.23):
 
         for row_idx, row in ticker_list.query('IN_PORT == False').iterrows():
             ticker_symbol = row['TICKER']
@@ -374,7 +432,8 @@ class System:
 
             order_action = 'BUY' if (sys_id == 1 or sys_id == 3) else 'SELL'
             if sys_id == 1:
-                order = MarketOrder(order_action, math.floor(totalQuantity))
+                order = MarketOrder(order_action, math.floor(totalQuantity),
+                                    orderRef=order_ref)
                 trade = self.ib.placeOrder(contract, order)
                 self.ib.sleep(1)
             elif (sys_id == 2 or sys_id == 3):

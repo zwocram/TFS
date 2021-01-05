@@ -5,11 +5,32 @@ import logging
 from sqlalchemy import create_engine
 from pytz import timezone
 
+from pandas.tseries.holiday import AbstractHolidayCalendar, Holiday, nearest_workday, \
+    USMartinLutherKingJr, USPresidentsDay, GoodFriday, USMemorialDay, \
+    USLaborDay, USThanksgivingDay
+
+
 from ib_insync import *
 
 
 import datetime
 import pdb
+
+
+class USTradingCalendar(AbstractHolidayCalendar):
+    rules = [
+        Holiday('NewYearsDay', month=1, day=1, observance=nearest_workday),
+        USMartinLutherKingJr,
+        USPresidentsDay,
+        GoodFriday,
+        USMemorialDay,
+        Holiday('USIndependenceDay', month=7, day=4,
+                observance=nearest_workday),
+        USLaborDay,
+        USThanksgivingDay,
+        Holiday('Christmas', month=12, day=25, observance=nearest_workday)
+    ]
+
 
 EAST_TZ = timezone('US/Eastern')
 NL_TZ = timezone('Europe/Amsterdam')
@@ -40,12 +61,15 @@ SYS_1_MAX_EXPOSURE = 0.10
 SYS_1_BUDGET = 0.25
 SYS_1_RISK_PERC = 0.02
 
+
 SYS_2_ATR = 'ATR10'
 SYS_2_ATR_FACTOR = 3
 SYS_2_MAX_EXPOSURE = 0.10
 SYS_2_BUDGET = 0.50
 SYS_2_RISK_PERC = 0.02
 SYS_2_LMT_PRICE_PERC = 0.04
+SYS_2_EXPIRATION_DATE = pd.offsets.CustomBusinessDay(
+    2, calendar=USTradingCalendar())
 
 SYS_3_ATR = 'ATR10'
 SYS_3_ATR_FACTOR = 2
@@ -53,6 +77,8 @@ SYS_3_MAX_EXPOSURE = 0.10
 SYS_3_BUDGET = 0.25
 SYS_3_RISK_PERC = 0.02
 SYS_3_LMT_PRICE_PERC = 0.07
+SYS_3_EXPIRATION_DATE = pd.offsets.CustomBusinessDay(
+    3, calendar=USTradingCalendar())
 
 logging.basicConfig()
 log = logging.getLogger(__name__)
@@ -70,6 +96,9 @@ class Utils:
             last_log_entry = [trade.log[-1].time
                               if len(trade.log) > 0 else None
                               for trade in trades]
+            last_log_entry_date = [trade.log[-1].time.strftime('%Y-%m-%d')
+                                   if len(trade.log) > 0 else None
+                                   for trade in trades]
             last_log_message = [trade.log[-1].message
                                 if len(trade.log) > 0 else None
                                 for trade in trades]
@@ -80,16 +109,22 @@ class Utils:
             {'TICKER': [trade.contract.symbol for trade in trades],
              'CONTRACT_ID': [trade.contract.conId for trade in trades],
              'ORDER_REF': [trade.order.orderRef for trade in trades],
+             'SYS_ID': [int(trade.order.orderRef[:1]) if len(trade.order.orderRef) > 0 else np.nan
+                        for trade in trades],
              'ORDER_ID': [trade.order.orderId for trade in trades],
              'ACTION': [trade.order.action for trade in trades],
              'QUANTITY': [trade.order.totalQuantity for trade in trades],
              'ORDER_TYPE': [trade.order.orderType for trade in trades],
              'LMT_PRICE': [trade.order.lmtPrice for trade in trades],
+             'STP_PRICE': [trade.order.auxPrice for trade in trades],
              'ACCOUNT': [trade.order.account for trade in trades],
              'STATUS': [trade.orderStatus.status for trade in trades],
+             'TIB_STATUS': ['OPEN' if trade.orderStatus.status == 'Filled'
+                            else np.nan for trade in trades],
              'FILLED': [trade.orderStatus.filled for trade in trades],
-             'LOG_MESSAGE': last_log_message,
-             'LAST_LOG': last_log_entry})
+             'LAST_LOG_MESSAGE': last_log_message,
+             'LAST_LOG_TIME': last_log_entry,
+             'LAST_LOG_DATE': last_log_entry_date})
 
         return trade_df
 
@@ -136,7 +171,24 @@ class Centurion:
             conId (int): The unique IB contract identifier.
         """
 
+        # do some date logic here
+        today = datetime.date.today()
+        next_business_day = pd.offsets.CustomBusinessDay(
+            calendar=USTradingCalendar())
+        print('today is', today)
+        trading_calendar = USTradingCalendar()
+        if today in trading_calendar.holidays(
+                start=today, end=today).to_pydatetime():
+            print('WATCH IT: today is NOT a us trading day')
+        if today.weekday() in (5, 6):
+            print('WATCH IT: today is a WEEKEND DAY')
+        print('next business day is', today + next_business_day)
+        print('system 2 expiration date is', today + SYS_2_EXPIRATION_DATE)
+        print('system 3 expiration date is', today + SYS_3_EXPIRATION_DATE)
+
         try:
+
+            tib_db = TIBDB()
             ib = IB()
             ib.connect('127.0.0.1', 4002, clientId=15)
             ibe = IBEventsHandling(ib)
@@ -147,10 +199,12 @@ class Centurion:
                              and v.currency == 'BASE'][0]
 
             forex_contracts = [Forex(f) for f in FOREX_LIST]
-            forex_close_prices = [(contract.symbol, ib.reqHistoricalData(
-                contract, endDateTime='', durationStr='3 D',
-                barSizeSetting='1 day', whatToShow='MIDPOINT',
-                useRTH=True, formatDate=1, keepUpToDate=False)[-1].close)
+            forex_close_prices = [(
+                contract.symbol+contract.currency,
+                ib.reqHistoricalData(
+                    contract, endDateTime='', durationStr='3 D',
+                    barSizeSetting='1 day', whatToShow='MIDPOINT',
+                    useRTH=True, formatDate=1, keepUpToDate=False)[-1].close)
                 for contract in forex_contracts]
 
             print('account value: ', account_value)
@@ -172,8 +226,8 @@ class Centurion:
             if sys_id == 2:
                 result_set = system.check_shortability(result_set.copy())
 
-            result_set = system.check_portfolio_for_ticker(result_set.copy())
-            system.placeOrder(result_set)
+            result_set = tib_db.check_portfolio_for_ticker(result_set.copy())
+            # system.placeOrder(result_set)
             # https://stackoverflow.com/questions/30045086/pandas-left-join-and-update-existing-column
             # print(pd.merge(result_set, open_positions, on='TICKER', how='left'))
             # result_set = system.check_portfolio_for_position(result_set.copy())
@@ -182,7 +236,9 @@ class Centurion:
             print(result_set)
 
         pd.set_option("max_rows", None)
+        # pdb.set_trace()
         print(Utils.trades_to_df(ib.trades()))
+        tib_db.save_trades_to_db(Utils.trades_to_df(ib.trades()))
 
         if ib.isConnected():
             # redirect to event handlers
@@ -205,27 +261,25 @@ class Centurion:
                 current_day, 16, 0, 0))
 
             nl_time = us_time.astimezone(NL_TZ).time()
+            pdb.set_trace()
 
             # for t in ib.timeRange(right_now, right_now + ml, 60):
             print('waiting until', nl_time)
             if ib.waitUntil(nl_time):
                 ib.sleep(10)  # make sure trading session is finished
                 trades_df = Utils.trades_to_df(ib.trades())
-                print('NEW CLOSING TRADES:')
-                print(trades_df.query('ORDER_REF.str.contains("-C") & '
-                                      'STATUS != "Cancelled"'))
 
-                print('NEW OPENING TRADES:')
-                print(trades_df.query('ORDER_REF.str.contains("-C") == False'
-                                      ' & STATUS != "Cancelled"'))
+                # save new filled trades to database
+                filled_open = trades_df.query(
+                    '(ORDER_REF.str.contains("-C") == False) '
+                    '& (STATUS == "Filled")')
+                tib_db.save_trades_to_db(filled_open, filled_open)
 
-                print('FILLED CLOSING TRADES:')
-                print(trades_df.query('(ORDER_REF.str.contains("-C")) & '
-                                      '(STATUS == "Filled")'))
-
-                print('FILLED OPENING TRADES:')
-                print(trades_df.query('(ORDER_REF.str.contains("-C") == False) '
-                                      '& (STATUS == "Filled")'))
+                # update position information on closed trades
+                filled_close = trades_df.query(
+                    '(ORDER_REF.str.contains("-C")) & '
+                    '(STATUS == "Filled")')
+                tib_db.update_closed_positions(filled_close)
 
                 ib.disconnect()
                 pdb.set_trace()
@@ -252,49 +306,6 @@ class System:
     ranking = None
     ranking_order = None
     ib = None
-
-    def _get_engine(self):
-        engine = create_engine(TIB_DB, echo=False)
-        return engine
-
-    def check_portfolio_for_ticker(self, ticker_list):
-
-        system_id = ticker_list.SYS_ID.min()
-        ticker_list['IN_PORT'] = False
-
-        engine = self._get_engine()
-        strSQL = """
-            SELECT
-                TICKER
-                , STATUS
-                , SYS_ID
-            FROM POSITION
-            WHERE
-                STATUS = 'open'
-                AND SYS_ID = {0};
-        """.format(system_id)
-
-        positions_info = None
-
-        try:
-            df_positions = pd.read_sql_query(
-                strSQL,
-                engine,
-                parse_dates={"DATE": "%Y-%m-%d %H:%M:%S"})
-            if len(df_positions) > 0:
-                positions_info = pd.merge(
-                    ticker_list, df_positions[['TICKER', 'STATUS']],
-                    on='TICKER', how='left')
-                positions_info['IN_PORT'] = positions_info['STATUS'].apply(
-                    lambda x: True if x == 'open' else False)
-                positions_info.drop('STATUS', axis=1, inplace=True)
-            else:
-                return ticker_list
-
-        except Exception as exp:
-            log.error("Error reading positions from database: ", exp)
-
-        return positions_info
 
     def _set_ranking_attributes(self):
 
@@ -492,3 +503,75 @@ class System:
                 log.error(exp)
 
         return temp_list.reset_index(level=1)
+
+
+class TIBDB:
+
+    tib_engine = None
+
+    def __init__(self):
+        self.tib_engine = create_engine(TIB_DB, echo=False)
+
+    def check_portfolio_for_ticker(self, ticker_list):
+
+        system_id = ticker_list.SYS_ID.min()
+        ticker_list['IN_PORT'] = False
+
+        strSQL = """
+            SELECT
+                TICKER
+                , STATUS
+                , SYS_ID
+            FROM POSITION
+            WHERE
+                STATUS = 'open'
+                AND SYS_ID = {0};
+        """.format(system_id)
+
+        positions_info = None
+
+        try:
+            df_positions = pd.read_sql_query(
+                strSQL,
+                self.tib_engine,
+                parse_dates={"DATE": "%Y-%m-%d %H:%M:%S"})
+            if len(df_positions) > 0:
+                positions_info = pd.merge(
+                    ticker_list, df_positions[['TICKER', 'STATUS']],
+                    on='TICKER', how='left')
+                positions_info['IN_PORT'] = positions_info['STATUS'].apply(
+                    lambda x: True if x == 'open' else False)
+                positions_info.drop('STATUS', axis=1, inplace=True)
+            else:
+                return ticker_list
+
+        except Exception as exp:
+            log.error("Error reading positions from database: ", exp)
+
+        return positions_info
+
+    def save_trades_to_db(self, *trades):
+        """
+        save trades to db
+        """
+
+        try:
+            for trade_set in trades:
+                trade_set.to_sql('TRADES', con=self.tib_engine,
+                                 if_exists='append')
+        except Exception as exp:
+            log.error('Error saving trades to database:', exp)
+
+    def update_closed_positions(self, trades):
+
+        sql = """
+            UPDATE TRADES
+            SET TIB_STATUS = 'CLOSED'
+            WHERE ORDER_REF IN ({0})
+            """.format(','.join(["'" + order_ref[:len(order_ref)-2] + "'" for
+                                 order_ref in trades.ORDER_REF]))
+
+        try:
+            self.tib_engine.execute(sql)
+        except Exception as exp:
+            log.error('Error update open positions to closed: ', exp)

@@ -1,11 +1,13 @@
-tfs_env/*
+tfs_venv/*
 examples/*
 *pyc
-tfs/logs/*
 tfs/tfs.db
 tfs/db/db.py
 tfs/db/tfs.db
+tfs/db/data.csv
+tfs/db/spy.csv
 tfs/correlations/us.csv
 tfs/trendfollowing.py
 tfs/ibapi
+tfs/resources
 tfs/.DS_Store

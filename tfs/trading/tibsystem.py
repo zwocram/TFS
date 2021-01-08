@@ -4,6 +4,7 @@ import pandas as pd
 import logging
 from sqlalchemy import create_engine
 from pytz import timezone
+from decimal import Decimal
 
 from pandas.tseries.holiday import AbstractHolidayCalendar, Holiday, nearest_workday, \
     USMartinLutherKingJr, USPresidentsDay, GoodFriday, USMemorialDay, \
@@ -68,8 +69,8 @@ SYS_2_MAX_EXPOSURE = 0.10
 SYS_2_BUDGET = 0.50
 SYS_2_RISK_PERC = 0.02
 SYS_2_LMT_PRICE_PERC = 0.04
-SYS_2_EXPIRATION_DATE = pd.offsets.CustomBusinessDay(
-    2, calendar=USTradingCalendar())
+SYS_2_EXPIRATION_DATE_DELTA = pd.offsets.CustomBusinessDay(
+    1, calendar=USTradingCalendar())  # equals 2 full expiration days
 
 SYS_3_ATR = 'ATR10'
 SYS_3_ATR_FACTOR = 2
@@ -77,8 +78,8 @@ SYS_3_MAX_EXPOSURE = 0.10
 SYS_3_BUDGET = 0.25
 SYS_3_RISK_PERC = 0.02
 SYS_3_LMT_PRICE_PERC = 0.07
-SYS_3_EXPIRATION_DATE = pd.offsets.CustomBusinessDay(
-    3, calendar=USTradingCalendar())
+SYS_3_EXPIRATION_DATE_DELTA = pd.offsets.CustomBusinessDay(
+    2, calendar=USTradingCalendar())  # equals 3 full expiration days
 
 logging.basicConfig()
 log = logging.getLogger(__name__)
@@ -119,12 +120,19 @@ class Utils:
              'STP_PRICE': [trade.order.auxPrice for trade in trades],
              'ACCOUNT': [trade.order.account for trade in trades],
              'STATUS': [trade.orderStatus.status for trade in trades],
+             'FILLED': [[fill.execution.cumQty for fill in trade.fills][-1]
+                        if len(trade.fills) > 0 else 0
+                        for trade in trades],  # last fill contains all
+             'AVG_PRICE': [[fill.execution.avgPrice for fill in trade.fills][-1]
+                           if len(trade.fills) > 0 else 0
+                           for trade in trades],  # last fill contains all
              'TIB_STATUS': ['OPEN' if trade.orderStatus.status == 'Filled'
                             else np.nan for trade in trades],
-             'FILLED': [trade.orderStatus.filled for trade in trades],
              'LAST_LOG_MESSAGE': last_log_message,
              'LAST_LOG_TIME': last_log_entry,
-             'LAST_LOG_DATE': last_log_entry_date})
+             'LAST_LOG_DATE': last_log_entry_date,
+             'SYS_2_EXP_DATE': np.nan,
+             'SYS_3_EXP_DATE': np.nan})
 
         return trade_df
 
@@ -165,7 +173,7 @@ class Centurion:
     """
 
     @staticmethod
-    def start_trading(eod_data):
+    def start_trading(eod_data, place_orders=False):
         """
         Args:
             conId (int): The unique IB contract identifier.
@@ -177,14 +185,20 @@ class Centurion:
             calendar=USTradingCalendar())
         print('today is', today)
         trading_calendar = USTradingCalendar()
+        next_business_day = today + next_business_day
+        sys_2_expiration_date = today + SYS_2_EXPIRATION_DATE_DELTA
+        sys_3_expiration_date = today + SYS_3_EXPIRATION_DATE_DELTA
+
         if today in trading_calendar.holidays(
                 start=today, end=today).to_pydatetime():
             print('WATCH IT: today is NOT a us trading day')
         if today.weekday() in (5, 6):
             print('WATCH IT: today is a WEEKEND DAY')
-        print('next business day is', today + next_business_day)
-        print('system 2 expiration date is', today + SYS_2_EXPIRATION_DATE)
-        print('system 3 expiration date is', today + SYS_3_EXPIRATION_DATE)
+        print('next business day is', next_business_day.strftime('%Y-%m-%d'))
+        print('system 2 expiration date is',
+              sys_2_expiration_date.strftime('%Y-%m-%d'))
+        print('system 3 expiration date is',
+              sys_3_expiration_date.strftime('%Y-%m-%d'))
 
         try:
 
@@ -227,18 +241,12 @@ class Centurion:
                 result_set = system.check_shortability(result_set.copy())
 
             result_set = tib_db.check_portfolio_for_ticker(result_set.copy())
-            # system.placeOrder(result_set)
-            # https://stackoverflow.com/questions/30045086/pandas-left-join-and-update-existing-column
-            # print(pd.merge(result_set, open_positions, on='TICKER', how='left'))
-            # result_set = system.check_portfolio_for_position(result_set.copy())
-            # df.insert(0, 'New_ID', range(880, 880 + len(df)))
+            if place_orders:
+                system.placeOrder(result_set)
 
             print(result_set)
 
         pd.set_option("max_rows", None)
-        # pdb.set_trace()
-        print(Utils.trades_to_df(ib.trades()))
-        tib_db.save_trades_to_db(Utils.trades_to_df(ib.trades()))
 
         if ib.isConnected():
             # redirect to event handlers
@@ -258,13 +266,13 @@ class Centurion:
             us_time = EAST_TZ.localize(datetime.datetime(
                 current_year,
                 current_month,
-                current_day, 16, 0, 0))
+                current_day, 14, 0, 0))
 
             nl_time = us_time.astimezone(NL_TZ).time()
-            pdb.set_trace()
 
             # for t in ib.timeRange(right_now, right_now + ml, 60):
             print('waiting until', nl_time)
+
             if ib.waitUntil(nl_time):
                 ib.sleep(10)  # make sure trading session is finished
                 trades_df = Utils.trades_to_df(ib.trades())
@@ -273,7 +281,10 @@ class Centurion:
                 filled_open = trades_df.query(
                     '(ORDER_REF.str.contains("-C") == False) '
                     '& (STATUS == "Filled")')
-                tib_db.save_trades_to_db(filled_open, filled_open)
+                tib_db.save_trades_to_db(
+                    filled_open,
+                    sys_2_expiration_date=sys_2_expiration_date,
+                    sys_3_expiration_date=sys_3_expiration_date)
 
                 # update position information on closed trades
                 filled_close = trades_df.query(
@@ -282,7 +293,6 @@ class Centurion:
                 tib_db.update_closed_positions(filled_close)
 
                 ib.disconnect()
-                pdb.set_trace()
                 exit()
 
             """
@@ -550,15 +560,29 @@ class TIBDB:
 
         return positions_info
 
-    def save_trades_to_db(self, *trades):
+    def save_trades_to_db(self, *trades, **kwargs):
         """
         save trades to db
         """
 
         try:
+            sys_2_exp_date = {exp_date for (sys_id, exp_date) in kwargs.items()
+                              if sys_id == 'sys_2_expiration_date'}
+            sys_3_exp_date = {exp_date for (sys_id, exp_date) in kwargs.items()
+                              if sys_id == 'sys_3_expiration_date'}
+
             for trade_set in trades:
-                trade_set.to_sql('TRADES', con=self.tib_engine,
-                                 if_exists='append')
+                trade_set_cp = trade_set.copy()
+                if len(sys_2_exp_date) > 0:
+                    trade_set_sys_2_sub = (trade_set_cp.SYS_ID == 2)
+                    trade_set_cp.loc[trade_set_sys_2_sub, 'SYS_2_EXP_DATE'] = \
+                        next(iter(sys_2_exp_date)).strftime('%Y-%m-%d')
+                if len(sys_3_exp_date) > 0:
+                    trade_set_sys_3_sub = (trade_set_cp.SYS_ID == 3)
+                    trade_set_cp.loc[trade_set_sys_3_sub, 'SYS_3_EXP_DATE'] = \
+                        next(iter(sys_3_exp_date)).strftime('%Y-%m-%d')
+                trade_set_cp.to_sql('TRADES', con=self.tib_engine,
+                                    if_exists='append')
         except Exception as exp:
             log.error('Error saving trades to database:', exp)
 

@@ -42,12 +42,14 @@ SOD_NY_TIME = datetime.time(9, 30)
 
 TIB_DB = 'sqlite:///tfs/db/tib.db'
 
+TOP_N_SYS_TICKERS = 10
+
 AVG_DOLLAR_20D_SYS_1 = 50000000
 AVG_DOLLAR_20D_SYS_2 = 25000000
 ATR_10_PERC_FLOOR_SYS3 = 0.05
 AVG_VOL_50D = 1000000
 
-FOREX_LIST = ['EURUSD']
+FOREX_LIST = ['EURUSD', 'GBPUSD', 'AUDUSD', 'USDJPY']
 
 SYS_PRICE_CHECK_1 = 5
 SYS_PRICE_CHECK_2 = 1
@@ -62,7 +64,6 @@ SYS_1_MAX_EXPOSURE = 0.10
 SYS_1_BUDGET = 0.25
 SYS_1_RISK_PERC = 0.02
 
-
 SYS_2_ATR = 'ATR10'
 SYS_2_ATR_FACTOR = 3
 SYS_2_MAX_EXPOSURE = 0.10
@@ -70,7 +71,7 @@ SYS_2_BUDGET = 0.50
 SYS_2_RISK_PERC = 0.02
 SYS_2_LMT_PRICE_PERC = 0.04
 SYS_2_EXPIRATION_DATE_DELTA = pd.offsets.CustomBusinessDay(
-    1, calendar=USTradingCalendar())  # equals 2 full expiration days
+    1, calendar=USTradingCalendar())  # equals 2 full days in trade
 
 SYS_3_ATR = 'ATR10'
 SYS_3_ATR_FACTOR = 2
@@ -79,7 +80,7 @@ SYS_3_BUDGET = 0.25
 SYS_3_RISK_PERC = 0.02
 SYS_3_LMT_PRICE_PERC = 0.07
 SYS_3_EXPIRATION_DATE_DELTA = pd.offsets.CustomBusinessDay(
-    2, calendar=USTradingCalendar())  # equals 3 full expiration days
+    2, calendar=USTradingCalendar())  # equals 3 full days in trade
 
 logging.basicConfig()
 log = logging.getLogger(__name__)
@@ -173,7 +174,7 @@ class Centurion:
     """
 
     @staticmethod
-    def start_trading(eod_data, place_orders=False):
+    def start_trading(eod_data, place_orders=False, account_value=0):
         """
         Args:
             conId (int): The unique IB contract identifier.
@@ -181,11 +182,11 @@ class Centurion:
 
         # do some date logic here
         today = datetime.date.today()
-        next_business_day = pd.offsets.CustomBusinessDay(
+        business_day = pd.offsets.CustomBusinessDay(
             calendar=USTradingCalendar())
-        print('today is', today)
         trading_calendar = USTradingCalendar()
-        next_business_day = today + next_business_day
+        next_business_day = today + business_day
+        prev_business_day = today - business_day
         sys_2_expiration_date = today + SYS_2_EXPIRATION_DATE_DELTA
         sys_3_expiration_date = today + SYS_3_EXPIRATION_DATE_DELTA
 
@@ -194,6 +195,8 @@ class Centurion:
             print('WATCH IT: today is NOT a us trading day')
         if today.weekday() in (5, 6):
             print('WATCH IT: today is a WEEKEND DAY')
+        print('previous business day was', prev_business_day.strftime('%Y-%m-%d'))
+        print('TODAY is', today)
         print('next business day is', next_business_day.strftime('%Y-%m-%d'))
         print('system 2 expiration date is',
               sys_2_expiration_date.strftime('%Y-%m-%d'))
@@ -201,28 +204,35 @@ class Centurion:
               sys_3_expiration_date.strftime('%Y-%m-%d'))
 
         try:
-
             tib_db = TIBDB()
             ib = IB()
             ib.connect('127.0.0.1', 4002, clientId=15)
             ibe = IBEventsHandling(ib)
 
-            # get account value
-            account_value = [v.value for v in ib.accountValues()
-                             if v.tag == 'NetLiquidationByCurrency'
-                             and v.currency == 'BASE'][0]
+            # set account value
+            if account_value == 0:
+                account_value = [v.value for v in ib.accountValues()
+                                 if v.tag == 'NetLiquidationByCurrency'
+                                 and v.currency == 'BASE'][0]
 
             forex_contracts = [Forex(f) for f in FOREX_LIST]
-            forex_close_prices = [(
-                contract.symbol+contract.currency,
-                ib.reqHistoricalData(
+            forex_close_prices = []
+
+            # use for loop because of transparency/complexity
+            for contract in forex_contracts:
+                ccy_symbol = contract.symbol+contract.currency
+                exch_rate = [bar.close for bar in ib.reqHistoricalData(
                     contract, endDateTime='', durationStr='3 D',
                     barSizeSetting='1 day', whatToShow='MIDPOINT',
-                    useRTH=True, formatDate=1, keepUpToDate=False)[-1].close)
-                for contract in forex_contracts]
+                    useRTH=True, formatDate=1, keepUpToDate=False)
+                    if bar.date == prev_business_day.date()]
+                forex_close_prices.append((ccy_symbol, exch_rate[0]))
 
-            print('account value: ', account_value)
-            print('forex data: ', forex_close_prices)
+            eur_usd = [exchange_rate[1] for exchange_rate in forex_close_prices
+                       if exchange_rate[0] == 'EURUSD'][0]
+
+            # print('account value: ', account_value)
+            # print('forex data: ', forex_close_prices)
             # portfolio = ib.portfolio()
 
         except ConnectionRefusedError:
@@ -233,7 +243,8 @@ class Centurion:
 
         for sys_id in sys_ids:
             system = System(sys_id, eod_data, ib)
-            result_set = system.filter_eod_data()
+            result_set = system.filter_eod_data().set_index(
+                'TICKER', append=True)
             result_set['SYS_ID'] = sys_id
             result_set['SHORTABLE'] = np.nan
             result_set['SEQ_NR'] = range(1, 1 + len(result_set))
@@ -241,10 +252,14 @@ class Centurion:
                 result_set = system.check_shortability(result_set.copy())
 
             result_set = tib_db.check_portfolio_for_ticker(result_set.copy())
-            if place_orders:
-                system.placeOrder(result_set)
 
-            print(result_set)
+            if place_orders:
+                system.placeOrder(
+                    result_set.head(TOP_N_SYS_TICKERS),
+                    account_value=account_value,
+                    eur_usd=eur_usd)
+
+            print(result_set.head(TOP_N_SYS_TICKERS))
 
         pd.set_option("max_rows", None)
 
@@ -266,7 +281,7 @@ class Centurion:
             us_time = EAST_TZ.localize(datetime.datetime(
                 current_year,
                 current_month,
-                current_day, 14, 0, 0))
+                current_day, 16, 0, 0))
 
             nl_time = us_time.astimezone(NL_TZ).time()
 
@@ -379,8 +394,8 @@ class System:
             filtered_data = self.eod_data.query(
                 self.pandas_query).sort_values(
                 by=self.ranking,
-                ascending=sort_ascending).head(10)[['TICKER', 'ATR10',
-                                                    'ATR20', 'Close', self.ranking]]
+                ascending=sort_ascending).head(2 * TOP_N_SYS_TICKERS)[[
+                    'TICKER', 'ATR10', 'ATR20', 'Close', self.ranking]]
 
         return filtered_data
 
@@ -430,7 +445,7 @@ class System:
     def placeOrder(self, ticker_list, account_value=36800, eur_usd=1.23):
 
         for row_idx, row in ticker_list.query('IN_PORT == False').iterrows():
-            ticker_symbol = row['TICKER']
+            ticker_symbol = row_idx[1]  # ticker is 2nd level of index
             price = row['Close']
             seq_nr = row['SEQ_NR']
 
@@ -455,6 +470,8 @@ class System:
             if sys_id == 1:
                 order = MarketOrder(order_action, math.floor(totalQuantity),
                                     orderRef=order_ref)
+                print(order_action, "MKT",
+                      math.floor(totalQuantity), ticker_symbol)
                 trade = self.ib.placeOrder(contract, order)
                 self.ib.sleep(1)
             elif (sys_id == 2 or sys_id == 3):
@@ -468,6 +485,9 @@ class System:
                                    totalQuantity=math.floor(totalQuantity),
                                    lmtPrice=round(limit_price, 2),
                                    orderRef=order_ref)
+                print(order_action, "LMT",
+                      math.floor(totalQuantity), ticker_symbol,
+                      "@", round(limit_price, 2))
                 trade = self.ib.placeOrder(contract, order)
                 self.ib.sleep(1)
 
@@ -494,7 +514,7 @@ class System:
         https://ib-insync.readthedocs.io/api.html?highlight=reqMktData#ib_insync.ib.IB.reqMktData
         """
 
-        temp_list = ticker_list.set_index('TICKER', append=True)
+        temp_list = ticker_list
 
         for row_idx, row in temp_list.iterrows():
             date = row_idx[0]
@@ -505,14 +525,14 @@ class System:
                 contract = Stock(ticker_symbol, 'SMART', 'USD')
                 self.ib.qualifyContracts(contract)
                 ticker = self.ib.reqMktData(contract, '236')
-                self.ib.sleep(2)
+                self.ib.sleep(1)
                 nr_shortable_shares = ticker.shortableShares
                 if nr_shortable_shares:
                     temp_list.loc[row_idx, ['SHORTABLE']] = nr_shortable_shares
             except Exception as exp:
                 log.error(exp)
 
-        return temp_list.reset_index(level=1)
+        return temp_list.query('(SHORTABLE.isnull()) == False')
 
 
 class TIBDB:
@@ -525,17 +545,16 @@ class TIBDB:
     def check_portfolio_for_ticker(self, ticker_list):
 
         system_id = ticker_list.SYS_ID.min()
-        ticker_list['IN_PORT'] = False
 
         strSQL = """
             SELECT
                 TICKER
-                , STATUS
-                , SYS_ID
-            FROM POSITION
+                , 1 as IN_PORT
+            FROM TRADES
             WHERE
-                STATUS = 'open'
-                AND SYS_ID = {0};
+                TIB_STATUS = 'OPEN'
+                AND SYS_ID = {0}
+            GROUP BY TICKER, IN_PORT;
         """.format(system_id)
 
         positions_info = None
@@ -545,20 +564,21 @@ class TIBDB:
                 strSQL,
                 self.tib_engine,
                 parse_dates={"DATE": "%Y-%m-%d %H:%M:%S"})
+
             if len(df_positions) > 0:
                 positions_info = pd.merge(
-                    ticker_list, df_positions[['TICKER', 'STATUS']],
+                    ticker_list.reset_index(),
+                    df_positions,
                     on='TICKER', how='left')
-                positions_info['IN_PORT'] = positions_info['STATUS'].apply(
-                    lambda x: True if x == 'open' else False)
-                positions_info.drop('STATUS', axis=1, inplace=True)
+                positions_info.replace(np.nan, 0, inplace=True)
             else:
+                ticker_list['IN_PORT'] = 0
                 return ticker_list
 
         except Exception as exp:
             log.error("Error reading positions from database: ", exp)
 
-        return positions_info
+        return positions_info.set_index(['DATE', 'TICKER'])
 
     def save_trades_to_db(self, *trades, **kwargs):
         """

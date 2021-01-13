@@ -20,11 +20,11 @@ from decimal import Decimal
 
 MAX_DAYS_HISTORY = '150 D'
 NR_LEAST_CORRELATED_ITEMS = 3
-PORTFOLIO_SIZE = 21
+PORTFOLIO_SIZE = 25
 
 
 def calc_mkt_shares(markets_dist=None, markets_available=None,
-                    markets_count=None, portf_size=25):
+                    markets_count=None, portf_size=30):
 
     # calculate number of items for each market that
     # has to be present in the portfolio
@@ -34,12 +34,13 @@ def calc_mkt_shares(markets_dist=None, markets_available=None,
 
     # if optimal market share < # market elements ==> take optimal
     # else divide market elements by 2 and floor it.
+    """
     markets_zipped = list(zip(markets_count, theo_market_shares))
     result = [(z[0][0], z[1][1])
               if z[0][1] > z[1][1] else (z[0][0], math.floor(z[0][1] / 2))
               for z in markets_zipped]
-
-    return result
+    """
+    return theo_market_shares
 
 
 def calc():
@@ -58,7 +59,8 @@ def calc():
                       " submatrix.")
     parser.add_option("-c", "--categorize", action="store_true", default=True,
                       dest="categorize", help="Indicates whether to group"
-                      " data based on e.g. asset class (energy, financial, etc)")
+                      " data based on e.g. asset class "
+                      "(energy, financial, etc)")
 
     (options, args) = parser.parse_args()
     import_corr = options.import_corr

@@ -6,7 +6,6 @@ from datetime import timedelta
 import norgatedata
 from trading import tibsystem
 
-from utils import filter
 from optparse import OptionParser
 import matplotlib.pyplot as plt
 from matplotlib import style

@@ -1,5 +1,7 @@
 import datetime as dt
+import time
 from datetime import timedelta
+
 
 import matplotlib.pyplot as plt
 from matplotlib import style
@@ -15,7 +17,7 @@ import traceback
 
 
 def _get_engine():
-    engine = create_engine('sqlite:///tfs/db/sts.db', echo=False)
+    engine = create_engine('sqlite:///tfs/tfs/db/sts.db', echo=False)
     return engine
 
 

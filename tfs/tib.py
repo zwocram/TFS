@@ -343,6 +343,9 @@ if __name__ == "__main__":
                       type='str', help="Which data source to use?"
                       " Default is eoddata. Other options:\n"
                       " - norgate")
+    parser.add_option("-a", "--account_value",
+                      dest="account_value",
+                      type='float', help="The value of broker account.")
     parser.add_option("-t", "--test", action='store_true',
                       default=False, dest="test_mode",
                       help="Puts the program in test mode.")
@@ -354,11 +357,14 @@ if __name__ == "__main__":
     data_source = options.datasource
     test_mode = options.test_mode
     place_orders = options.place_orders
+    account_value = 0 if not options.account_value else options.account_value
 
     if test_mode:
         eod_hist = pd.read_csv(
             INSTR_DATA + 'eod_hist.csv', index_col=['DATE'])
-        tibsystem.Centurion.start_trading(eod_hist, place_orders=place_orders)
+        tibsystem.Centurion.start_trading(
+            eod_hist, place_orders=place_orders,
+            account_value=account_value)
         sys.exit()
 
     if import_csv:
